@@ -1,0 +1,28 @@
+{
+  "name": "@sentinelle/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "reset": "tsx src/reset.ts",
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.16",
+    "@fastify/static": "^10",
+    "@sentinelle/contracts": "workspace:*",
+    "@sentinelle/domain": "workspace:*",
+    "fastify": "^5",
+    "pg": "^8",
+    "tsx": "^4",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/pg": "^8",
+    "typescript": "5.9.3",
+    "vitest": "^5"
+  }
+}
