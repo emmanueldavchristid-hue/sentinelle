@@ -38,7 +38,7 @@ packages/domain   moteur pur, déterministe, sans LLM ni I/O
 packages/contracts schémas Zod partagés
 docs/             produit, domaine, décisions, état, démo, tests, maquettes
 ```
-Démo cible : un seul ordinateur Windows ; Postgres via Docker Compose, alternative Postgres natif (D-06).
+Démo cible : un seul ordinateur Windows ; PostgreSQL embarqué (PGlite) par défaut, serveur PostgreSQL via `DATABASE_URL` (D-06, D-10).
 Scripts portables (Node/pnpm), pas de bash obligatoire.
 
 ## Commandes
