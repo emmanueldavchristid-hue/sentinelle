@@ -194,8 +194,8 @@ const PreviewSchema = z.object({ csv: z.string().min(1, 'Fichier vide') });
 const CommitSchema = z.object({ csv: z.string().min(1, 'Fichier vide'), idempotencyKey: z.uuid(), fileHash: z.string().regex(/^[0-9a-f]{64}$/) });
 
 export function registerImport(ctx: Ctx) {
-  ctx.app.get('/api/import/template.csv', async (req, reply) => {
-    await ctx.currentUser(req);
+  // Modèle public : il ne contient que des exemples, aucune donnée.
+  ctx.app.get('/api/import/template.csv', async (_req, reply) => {
     reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', 'attachment; filename="sentinelle-modele-import.csv"');
     return `﻿${CSV_TEMPLATE}\r\n`;
   });

@@ -45,7 +45,8 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - `pnpm install` · `pnpm demo` (build web + serveur unique http://localhost:3000) · `pnpm dev` (API 3000 + Vite 5173)
 - `pnpm test` (Vitest : domain, api avec PGlite en mémoire, web/outbox avec fake-indexeddb) · `pnpm typecheck`
 - `pnpm e2e` (build + Playwright ; ici : `CHROME_PATH=/usr/bin/google-chrome`, Chromium non téléchargeable)
-- `pnpm demo:reset [--avec-signalement]` (destructif, DEMO_MODE uniquement)
+- `pnpm demo:reset [--avec-signalement]` (destructif, DEMO_MODE uniquement) · `pnpm user:create …` (mode authentifié)
+- E2E : projets `desktop` (démo, port 3100) et `auth` (DEMO_MODE=false, port 3101, ignoré sous Windows)
 - Base : PGlite dans `data/pglite` par défaut ; `DATABASE_URL` pour un serveur PostgreSQL ; `DATA_DIR=memory` pour une base volatile.
 - Migrations : `apps/api/src/migrations/NNN_*.sql`, appliquées au démarrage (table `schema_migrations`).
 
@@ -78,3 +79,6 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - `docs/mockups/` — maquette statique initiale
 - `docs/DEMO.md` — script, préparation, secours, limites, pitch, travaux à déclarer
 - `docs/DESIGN.md` — tokens, contrastes mesurés, principes
+
+## Modules API
+`app.ts` (cœur, enquêtes, corrections, historique) · `auth.ts` (D-13) · `import.ts` (D-14) · `assist.ts` (D-15) · `http.ts` (erreurs, validation)

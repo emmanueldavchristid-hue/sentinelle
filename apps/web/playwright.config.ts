@@ -20,13 +20,30 @@ export default defineConfig({
     ...(executablePath ? { launchOptions: { executablePath, args: ['--no-sandbox'] } } : { channel: process.env.PW_CHANNEL || undefined }),
   },
   projects: [
-    { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    { name: 'desktop', testIgnore: /auth\.spec/, use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    // Mode authentifié (DEMO_MODE=false) : serveur distinct, compte créé par le script CLI. Commande shell POSIX : ignoré sous Windows.
+    ...(process.platform === 'win32'
+      ? []
+      : [{ name: 'auth', testMatch: /auth\.spec/, use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${PORT + 1}`, ...(executablePath ? { channel: undefined } : {}) } }]),
   ],
-  webServer: {
-    command: 'pnpm --filter @sentinelle/api start',
-    url: `http://127.0.0.1:${PORT}/api/health`,
-    reuseExistingServer: false,
-    timeout: 60_000,
-    env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true' },
-  },
+  webServer: [
+    {
+      command: 'pnpm --filter @sentinelle/api start',
+      url: `http://127.0.0.1:${PORT}/api/health`,
+      reuseExistingServer: false,
+      timeout: 60_000,
+      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true' },
+    },
+    ...(process.platform === 'win32'
+      ? []
+      : [
+          {
+            command: `rm -rf /tmp/sentinelle-e2e-auth && printf 'mot-de-passe-e2e-2026\\n' | pnpm --silent --filter @sentinelle/api user:create --id U-VET --username dr.e2e --name "Vétérinaire E2E" --role VET --org ORG-DEMO && pnpm --filter @sentinelle/api start`,
+            url: `http://127.0.0.1:${PORT + 1}/api/health`,
+            reuseExistingServer: false,
+            timeout: 90_000,
+            env: { PORT: String(PORT + 1), DATA_DIR: '/tmp/sentinelle-e2e-auth', DEMO_MODE: 'false' },
+          },
+        ]),
+  ],
 });

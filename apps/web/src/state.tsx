@@ -3,6 +3,11 @@ import { api, ApiFailure, isSimulatedOffline, loadSession, NetworkError, saveSes
 import { LocalDb, localDbName, recoverInterrupted, syncOutbox, type OutboxItem, type SendResult } from './local';
 
 export type Connection = 'checking' | 'online' | 'offline';
+export interface Health {
+  demoMode: boolean;
+  ai: { enabled: boolean; provider: string | null };
+  engineVersion: string;
+}
 
 interface Ctx {
   session: Session | null;
@@ -10,6 +15,7 @@ interface Ctx {
   logout: () => Promise<void>;
   db: LocalDb | null;
   connection: Connection;
+  health: Health | null;
   lastCheck: string | null;
   checkConnection: () => Promise<boolean>;
   simulated: boolean;
@@ -46,6 +52,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(loadSession);
   const [connection, setConnection] = useState<Connection>('checking');
   const [lastCheck, setLastCheck] = useState<string | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
   const [simulated, setSim] = useState(isSimulatedOffline());
   const [syncing, setSyncing] = useState(false);
   const [outboxVersion, setOutboxVersion] = useState(0);
@@ -61,7 +68,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Vérifie réellement le serveur (ne se fie pas à navigator.onLine). */
   const checkConnection = useCallback(async () => {
     try {
-      await api('/api/health', { timeoutMs: 4000 });
+      const h = await api<Health>('/api/health', { timeoutMs: 4000 });
+      setHealth(h);
       setConnection('online');
       setLastCheck(new Date().toISOString());
       return true;
@@ -99,8 +107,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSession(s);
   }, []);
 
-  /** Déconnexion : purge des données locales de cet utilisateur (brouillons, file, cache). */
+  /** Déconnexion : fin de session serveur (mode authentifié) et purge des données locales de cet utilisateur. */
   const logout = useCallback(async () => {
+    try {
+      await api('/api/auth/logout', { method: 'POST', body: {} });
+    } catch {
+      /* hors connexion : la purge locale a lieu quand même */
+    }
     if (db) {
       db.close();
       await db.delete();
@@ -109,6 +122,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSession(null);
     go('');
   }, [db]);
+
+  // Hors mode démonstration, la simulation de coupure n'a pas de sens : elle est désactivée.
+  useEffect(() => {
+    if (health && !health.demoMode && simulated) setSimulated(false);
+  }, [health, simulated, setSimulated]);
+
+  // Session expirée ou révoquée côté serveur : on revient à l'écran de connexion (données locales purgées).
+  useEffect(() => {
+    if (!session) return;
+    api('/api/me', { session }).catch((e) => {
+      if (e instanceof ApiFailure && e.status === 401) logout();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   const syncNow = useCallback(
     async (includeFailed = false) => {
@@ -146,6 +173,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     logout,
     db,
     connection,
+    health,
     lastCheck,
     checkConnection,
     simulated,

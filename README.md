@@ -21,6 +21,7 @@ Au premier démarrage, la base PostgreSQL embarquée (PGlite) est créée dans `
 |---|---|
 | `pnpm demo` | Compile l’interface et lance le serveur unique (API + interface) |
 | `pnpm dev` | Développement : API (port 3000) + Vite (port 5173) |
+| `pnpm user:create --id ID --username IDENTIFIANT --name "Nom" --role AGENT\|VET --org ORG-DEMO` | Crée un compte pour le mode authentifié (mot de passe demandé, 12 caractères minimum) |
 | `pnpm demo:reset` | Réinitialise les données de démonstration (destructif, mode démo uniquement). Option : `pnpm demo:reset --avec-signalement` |
 | `pnpm test` | Tests unitaires et d’intégration (moteur, API, file locale) |
 | `pnpm typecheck` | Vérification des types |
@@ -33,6 +34,30 @@ docker compose up -d
 # bash       : DATABASE_URL=postgres://sentinelle:sentinelle-demo@localhost:5432/sentinelle pnpm demo
 ```
 Cette voie n’a **pas** été exécutée dans l’environnement de développement (démon Docker indisponible) : à vérifier sur la machine de démonstration.
+
+## Fonctionnalités
+
+- **Terrain (agent)** : recherche manuelle ou QR code (raccourci, sans valeur de preuve), fiche animale consultable hors connexion, déclaration avec brouillon persistant, file d’envoi explicite et sans doublon, correction des présences et des mouvements demandée par l’enquêteur.
+- **Enquête (vétérinaire)** : examen humain du signalement, analyse déterministe (parcours enregistré / liens potentiels / conclusions impossibles), preuves et calcul de chaque résultat, informations à vérifier, versions d’analyse et comparaison expliquée, paramètres modifiables, historique du dossier, impression.
+- **Import CSV** avec prévisualisation, erreurs ligne par ligne et import tout-ou-rien.
+- **Aide IA facultative** à la structuration d’une observation : désactivée par défaut, proposition à confirmer.
+
+## Deux modes d’accès
+
+| | Mode démonstration (`DEMO_MODE=true`, défaut) | Mode authentifié (`DEMO_MODE=false`) |
+|---|---|---|
+| Accès | sélecteur de rôle, **pas d’authentification** | identifiant + mot de passe, cookie de session httpOnly |
+| Réinitialisation | possible | refusée |
+| Usage | démonstration locale | base d’un pilote — **pas encore prêt pour une mise en ligne** (voir D-13) |
+
+```bash
+# PowerShell
+$env:DEMO_MODE="false"; pnpm user:create --id U-VET-1 --username dr.exemple --name "Dr Exemple" --role VET --org ORG-DEMO
+$env:DEMO_MODE="false"; pnpm demo
+```
+
+## Aide IA (facultative)
+Sans configuration, l’aide est désactivée et la saisie manuelle est complète. Pour l’activer, définir côté serveur `AI_PROVIDER=anthropic` et `ANTHROPIC_API_KEY` (clé personnelle, facturée par le fournisseur — à ne jamais versionner). Le texte saisi est traité comme une donnée non fiable, la réponse est validée par un schéma strict et rien n’est enregistré sans confirmation. L’appel réel n’a **pas** été testé dans ce projet (aucune clé).
 
 ## Architecture
 
@@ -55,4 +80,5 @@ docs/               produit, domaine, décisions, état, démo, design, tests, m
 - **Mode démonstration** : sélecteur de rôle, **pas d’authentification sécurisée**. Ne pas mettre en ligne.
 - La règle R-B1 (chevauchement de présence) est une **règle de démonstration à valider** par des vétérinaires.
 - « Exclu par cette recherche » ne signifie pas « sans risque sanitaire ».
-- Le hors connexion suppose que l’application a déjà été chargée une fois avec le réseau.
+- Le hors connexion suppose que l’application a déjà été chargée une fois avec le réseau ; la correction d’un enregistrement nécessite le serveur.
+- Le scan QR dépend de l’API BarcodeDetector du navigateur (Chrome/Edge Android notamment) ; non testé avec une vraie caméra.

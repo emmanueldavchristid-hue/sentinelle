@@ -11,11 +11,12 @@ const NAV = {
   VET: [
     ['signalements', 'Signalements'],
     ['enquetes', 'Enquêtes'],
+    ['import', 'Import'],
   ],
 } as const;
 
 export function ConnectionControl({ compact = false }: { compact?: boolean }) {
-  const { connection, lastCheck, checkConnection, simulated, setSimulated } = useApp();
+  const { connection, lastCheck, checkConnection, simulated, setSimulated, health } = useApp();
   const label = connection === 'online' ? 'Serveur joignable' : connection === 'offline' ? 'Hors connexion' : 'Vérification…';
   const cls = connection === 'online' ? 'border-petrol/30 bg-petrol-soft text-petrol' : connection === 'offline' ? 'border-amber-line bg-amber-soft text-amber' : '';
   return (
@@ -25,22 +26,25 @@ export function ConnectionControl({ compact = false }: { compact?: boolean }) {
         {label}
         {!compact && lastCheck && <span className="num text-[11px] opacity-80">· vérifié {formatInstant(Date.parse(lastCheck)).slice(11)}</span>}
       </button>
+      {health?.demoMode !== false && (
       <label className="pill min-h-9 cursor-pointer" title="Bloque les appels réseau dans ce navigateur, pour la démonstration">
         <input type="checkbox" checked={simulated} onChange={(e) => setSimulated(e.target.checked)} />
         Couper le réseau <span className="text-muted">(simulation démo)</span>
       </label>
+      )}
     </div>
   );
 }
 
 export function Shell({ current, children, header }: { current: string; children: ReactNode; header?: ReactNode }) {
-  const { session, logout } = useApp();
+  const { session, logout, health } = useApp();
   if (!session) return null;
+  const demo = health?.demoMode !== false;
   const nav = NAV[session.role];
   return (
     <div className="min-h-screen">
       <div className="bg-ink px-3 py-1 text-center text-xs text-white" role="note">
-        Démonstrateur — données entièrement synthétiques — mode démonstration (pas d’authentification sécurisée)
+        {demo ? 'Démonstrateur — données entièrement synthétiques — mode démonstration (pas d’authentification sécurisée)' : 'Prototype — données de démonstration synthétiques — session authentifiée'}
       </div>
       <div className="md:grid md:grid-cols-[200px_1fr]">
         <nav aria-label="Navigation principale" className="no-print hidden border-r border-line bg-surface p-3 md:block">
@@ -65,9 +69,9 @@ export function Shell({ current, children, header }: { current: string; children
             <p className="font-semibold text-ink">{session.name}</p>
             <p>{session.orgName}</p>
             <button className="btn btn-sm mt-3 w-full" onClick={() => logout()}>
-              Changer de rôle
+              {demo ? 'Changer de rôle' : 'Se déconnecter'}
             </button>
-            <p className="mt-2 text-[11px]">Purge les données locales de ce rôle.</p>
+            <p className="mt-2 text-[11px]">Purge les données locales de cet utilisateur.</p>
           </div>
         </nav>
         <div className="min-w-0 pb-20 md:pb-0">
@@ -79,7 +83,7 @@ export function Shell({ current, children, header }: { current: string; children
             <div className="min-w-0 flex-1">{header}</div>
             <ConnectionControl />
             <button className="btn btn-sm md:hidden" onClick={() => logout()}>
-              Changer de rôle
+              {demo ? 'Changer de rôle' : 'Se déconnecter'}
             </button>
           </header>
           <main id="contenu" className="p-3 md:p-6">

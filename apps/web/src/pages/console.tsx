@@ -122,7 +122,7 @@ function Schema({
 
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="schema-title schema-desc" className="block h-auto w-full">
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="schema-title schema-desc" className="mx-auto block h-auto w-full max-w-[1000px]">
         <title id="schema-title">Schéma des lieux et des chemins de l’analyse</title>
         <desc id="schema-desc">Représentation visuelle des résultats. Toutes les informations figurent aussi dans la liste des résultats.</desc>
         <defs>{markers}</defs>
@@ -384,6 +384,94 @@ function ComparePanel({ cmp, onSelect, onClose }: { cmp: CompareDto; onSelect: (
   );
 }
 
+// ---------------- Paramètres d'analyse ----------------
+
+function ParamsEditor({ params, busy, onRun }: { params: AnalysisOutput['params']; busy: boolean; onRun: (p: { window: { from: string; to: string }; maxDepth: number }) => void }) {
+  const [from, setFrom] = useState(params.window.from.slice(0, 10));
+  const [to, setTo] = useState(params.window.to.slice(0, 10));
+  const [depth, setDepth] = useState(params.maxDepth);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setFrom(params.window.from.slice(0, 10));
+    setTo(params.window.to.slice(0, 10));
+    setDepth(params.maxDepth);
+  }, [params]);
+  return (
+    <details className="card no-print">
+      <summary className="card-h cursor-pointer">Modifier les paramètres et relancer</summary>
+      <div className="flex flex-wrap items-end gap-3 p-4">
+        <div className="field">
+          <label htmlFor="p-from">Début de la fenêtre</label>
+          <input id="p-from" type="date" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="p-to">Fin de la fenêtre (exclue)</label>
+          <input id="p-to" type="date" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="p-depth">Profondeur</label>
+          <select id="p-depth" className="input" value={depth} onChange={(e) => setDepth(Number(e.target.value))}>
+            {[1, 2, 3, 4].map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          className="btn btn-primary"
+          disabled={busy}
+          onClick={() => {
+            if (!(from && to && from < to)) return setErr('La fin de la fenêtre doit suivre le début.');
+            setErr(null);
+            onRun({ window: { from: `${from}T00:00:00.000Z`, to: `${to}T00:00:00.000Z` }, maxDepth: depth });
+          }}
+        >
+          Lancer avec ces paramètres
+        </button>
+        {err && <p className="field-error w-full">{err}</p>}
+        <p className="hint w-full">Une nouvelle analyse est créée ; les précédentes restent consultables. La fenêtre est un paramètre de recherche, pas une durée d’incubation.</p>
+      </div>
+    </details>
+  );
+}
+
+// ---------------- Historique du dossier ----------------
+
+const ACTION_LABELS: Record<string, string> = {
+  INVESTIGATION_OPENED: 'Enquête ouverte',
+  ANALYSIS_RUN: 'Analyse calculée',
+  TASK_REQUESTED: 'Vérification demandée à un agent',
+  RECORD_REVISED: 'Enregistrement corrigé (nouvelle révision)',
+  OBSERVATION_RECEIVED: 'Signalement reçu',
+  OBSERVATION_CLOSED: 'Signalement classé',
+};
+
+function History({ id, version }: { id: string; version: number }) {
+  const h = useResource<{ at: string; action: string; entity: string; entityId: string; actor: string | null; detail: Record<string, unknown> }[]>(`/api/investigations/${id}/history`, [version]);
+  return (
+    <details className="card">
+      <summary className="card-h cursor-pointer">Historique du dossier</summary>
+      {h.error ? <ErrorView error={h.error} onRetry={h.reload} /> : null}
+      {h.data && (
+        <ol className="divide-y divide-line">
+          {h.data.map((e, i) => (
+            <li key={i} className="flex flex-wrap gap-x-4 px-4 py-2 text-sm">
+              <span className="num text-ink-2">{formatInstant(Date.parse(e.at))}</span>
+              <span className="font-medium">{ACTION_LABELS[e.action] ?? e.action}</span>
+              <span className="text-ink-2">
+                {e.entity === 'record' ? `${e.entityId}, révision ${String(e.detail.rev ?? '')}` : ''}
+                {e.action === 'ANALYSIS_RUN' ? `n° ${String(e.detail.seq ?? '')} · instantané #${String(e.detail.snapshotHash ?? '').slice(0, 8)}` : ''}
+              </span>
+              <span className="flex-1 text-right text-ink-2">{e.actor ?? 'système'}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </details>
+  );
+}
+
 // ---------------- Console ----------------
 
 export function InvestigationConsole({ id }: { id: string }) {
@@ -427,12 +515,13 @@ export function InvestigationConsole({ id }: { id: string }) {
     if (window.matchMedia('(max-width: 1279px)').matches) whyRef.current?.scrollIntoView({ block: 'nearest' });
   };
 
-  const rerun = async () => {
+  const rerun = async (override?: { window: { from: string; to: string }; maxDepth: number }) => {
     if (!run) return;
     setBusy(true);
     setMsg(null);
     try {
-      const r = await api<{ seq: number }>(`/api/investigations/${id}/runs`, { method: 'POST', session, body: { window: run.params.window, maxDepth: run.params.maxDepth } });
+      const params = override ?? { window: run.params.window, maxDepth: run.params.maxDepth };
+      const r = await api<{ seq: number }>(`/api/investigations/${id}/runs`, { method: 'POST', session, body: params });
       await inv.reload();
       setSeq(r.seq);
       const c = await loadCompare(r.seq - 1, r.seq);
@@ -492,7 +581,7 @@ export function InvestigationConsole({ id }: { id: string }) {
           <button className="btn" onClick={() => window.print()}>
             Imprimer
           </button>
-          <button className="btn btn-primary" onClick={rerun} disabled={busy || !run}>
+          <button className="btn btn-primary" onClick={() => rerun()} disabled={busy || !run}>
             {busy ? 'Calcul…' : 'Relancer l’analyse'}
           </button>
         </div>
@@ -510,6 +599,8 @@ export function InvestigationConsole({ id }: { id: string }) {
           ))}
         </nav>
       )}
+
+      {run && <ParamsEditor params={run.params} busy={busy} onRun={(p) => rerun(p)} />}
 
       {cmp && <ComparePanel cmp={cmp} onSelect={(k) => (setSeq(cmp.b), select(k))} onClose={() => setCmp(null)} />}
 
@@ -604,6 +695,7 @@ export function InvestigationConsole({ id }: { id: string }) {
           </aside>
         </div>
       )}
+      <History id={id} version={d.runs.length + d.tasks.filter((t) => t.status !== 'OPEN').length} />
       <p className="text-xs text-muted">
         Les résultats sont des pistes de vérification calculées à partir des données enregistrées. Ils ne constituent ni un diagnostic, ni une preuve de contact, ni une preuve de transmission. « Exclu par cette recherche » ne signifie pas « sans risque sanitaire ».
       </p>

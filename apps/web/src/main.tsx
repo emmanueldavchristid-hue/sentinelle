@@ -1,12 +1,14 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
-import { api, errorMessage } from './api';
+import { api, ApiFailure, errorMessage } from './api';
 import { AppProvider, go, useApp, useRoute } from './state';
 import { Shell, ConnectionControl } from './components/Shell';
 import { Banner, ErrorView, Loading } from './components/ui';
 import { AgentTasks, AnimalCard, AnimalSearch, ObservationForm, Outbox, TaskCorrection } from './pages/agent';
 import { InvestigationList, Review, Signals } from './pages/vet';
+import { ImportPage } from './pages/import';
+import { QrScan } from './pages/qr';
 import { InvestigationConsole } from './pages/console';
 
 interface DemoUser {
@@ -15,6 +17,89 @@ interface DemoUser {
   role: 'AGENT' | 'VET';
   org_id: string;
   org_name: string;
+}
+
+function LoginForm() {
+  const { login } = useApp();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!username.trim() || !password) return setError('Saisissez votre identifiant et votre mot de passe.');
+    setBusy(true);
+    try {
+      const u = await api<{ id: string; name: string; role: 'AGENT' | 'VET'; org_id: string; orgName: string }>('/api/auth/login', { method: 'POST', body: { username: username.trim(), password } });
+      setPassword('');
+      login({ userId: u.id, name: u.name, role: u.role, orgId: u.org_id, orgName: u.orgName });
+      go(u.role === 'AGENT' ? 'animaux' : 'signalements');
+    } catch (err) {
+      setError(err instanceof ApiFailure ? err.message : errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="card space-y-3 p-4" onSubmit={submit} noValidate aria-labelledby="login-h">
+      <h2 id="login-h" className="text-base font-semibold">
+        Connexion
+      </h2>
+      <div className="field">
+        <label htmlFor="login-user">Identifiant</label>
+        <input id="login-user" className="input" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
+      </div>
+      <div className="field">
+        <label htmlFor="login-pass">Mot de passe</label>
+        <input id="login-pass" type="password" className="input" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+      </div>
+      {error && (
+        <p role="alert" className="field-error">
+          {error}
+        </p>
+      )}
+      <button className="btn btn-primary w-full" disabled={busy}>
+        {busy ? 'Connexion…' : 'Se connecter'}
+      </button>
+      <p className="hint">Les comptes sont créés par un administrateur (commande « pnpm user:create »).</p>
+    </form>
+  );
+}
+
+function Home() {
+  const { health, connection } = useApp();
+  if (!health) {
+    return connection === 'offline' ? (
+      <div className="mx-auto max-w-xl p-6">
+        <ErrorView error={new ApiFailure(503, { error: 'OFFLINE', message: 'Serveur injoignable : la première connexion nécessite le réseau.' })} />
+      </div>
+    ) : (
+      <Loading />
+    );
+  }
+  return health.demoMode ? <RolePicker /> : <AuthPage />;
+}
+
+function AuthPage() {
+  return (
+    <div className="min-h-screen">
+      <div className="bg-ink px-3 py-1 text-center text-xs text-white" role="note">
+        Prototype — données de démonstration synthétiques
+      </div>
+      <main className="mx-auto max-w-md space-y-4 p-4 pt-10">
+        <div className="flex items-center gap-3">
+          <img src="/icon.svg" alt="" width={44} height={44} />
+          <div>
+            <h1 className="text-2xl font-bold">Sentinelle</h1>
+            <p className="text-ink-2">Du signalement à l’enquête, chaque mouvement compte.</p>
+          </div>
+        </div>
+        <LoginForm />
+        <ConnectionControl />
+      </main>
+    </div>
+  );
 }
 
 function RolePicker() {
@@ -105,7 +190,7 @@ function RolePicker() {
 function Router() {
   const { session } = useApp();
   const [page, arg] = useRoute();
-  if (!session) return <RolePicker />;
+  if (!session) return <Home />;
   if (session.role === 'AGENT') {
     switch (page) {
       case 'animal':
@@ -116,6 +201,8 @@ function Router() {
         return <Shell current="envois" header={<span className="font-semibold">Déclarations</span>}><Outbox /></Shell>;
       case 'taches':
         return <Shell current="taches" header={<span className="font-semibold">Vérifications</span>}><AgentTasks /></Shell>;
+      case 'scan':
+        return <Shell current="animaux" header={<span className="font-semibold">Scanner un QR code</span>}><QrScan /></Shell>;
       case 'tache':
         return <Shell current="taches" header={<span className="font-semibold">Compléter une information</span>}>{arg ? <TaskCorrection taskId={arg} /> : null}</Shell>;
       default:
@@ -125,6 +212,8 @@ function Router() {
   switch (page) {
     case 'signalement':
       return <Shell current="signalements" header={<span className="font-semibold">Examen</span>}>{arg ? <Review id={arg} /> : null}</Shell>;
+    case 'import':
+      return <Shell current="import" header={<span className="font-semibold">Import de données</span>}><ImportPage /></Shell>;
     case 'enquetes':
       return <Shell current="enquetes" header={<span className="font-semibold">Enquêtes</span>}><InvestigationList /></Shell>;
     case 'enquete':

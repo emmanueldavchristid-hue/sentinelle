@@ -87,7 +87,7 @@ test('parcours principal : fiche → observation hors connexion → réouverture
 
   // Demande de vérification à un agent
   await page2.getByRole('listitem').filter({ hasText: 'Préciser les heures de présence de B-052' }).getByRole('button', { name: 'Demander à un agent' }).click();
-  await expect(page2.getByText('Demandée à un agent')).toBeVisible();
+  await expect(page2.getByText('Demandée à un agent', { exact: true })).toBeVisible();
   const invUrl = page2.url();
 
   // 9. Agent : correction → nouvelle révision

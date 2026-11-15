@@ -1,0 +1,141 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const reset = async (page: Page, withObservation: boolean) => expect((await page.request.post('/api/demo/reset', { data: { withObservation } })).ok()).toBeTruthy();
+async function role(page: Page, name: RegExp) {
+  await page.goto('/');
+  await page.getByRole('button', { name }).click();
+}
+async function switchRole(page: Page, name: RegExp) {
+  await page.getByRole('button', { name: 'Changer de rôle' }).first().click();
+  await page.getByRole('button', { name }).click();
+}
+async function openInvestigation(page: Page) {
+  await page.getByRole('button', { name: 'Examiner' }).click();
+  await page.getByRole('button', { name: /Ouvrir l’enquête/ }).click();
+  await expect(page.getByRole('heading', { name: /Enquête · signalement sur B-017/ })).toBeVisible();
+}
+
+test.describe.configure({ mode: 'serial' });
+
+test('vrai mode hors ligne (réseau coupé par le navigateur, service worker) : rechargement, saisie, puis transmission', async ({ page, context }) => {
+  await reset(page, false);
+  await role(page, /Agent de terrain/);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.reload(); // la page est désormais contrôlée par le service worker
+  await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+  await page.getByRole('link', { name: /B-017/ }).click();
+  await expect(page.getByRole('heading', { name: /Fiche B-017/ })).toBeVisible();
+
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: /Fiche B-017/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Hors connexion/ })).toBeVisible();
+  await expect(page.getByText(/Données locales, peut-être périmées/)).toBeVisible();
+  await page.getByRole('button', { name: 'Nouvelle observation' }).click();
+  await page.getByLabel('Lieu').selectOption('C');
+  await page.locator('#obs-time-date').fill('2026-03-12');
+  await page.getByText('Jour seulement').click();
+  await page.getByLabel('Observation', { exact: true }).fill('Toux observée, heure non relevée.');
+  await page.getByRole('button', { name: 'Enregistrer sur l’appareil' }).click();
+  await expect(page.getByTestId('outbox-item')).toContainText('À transmettre');
+  await expect(page.getByTestId('outbox-item')).toContainText('heure inconnue');
+
+  await context.setOffline(false);
+  await page.getByRole('button', { name: /Serveur joignable|Hors connexion/ }).click();
+  await expect(page.getByRole('button', { name: /Serveur joignable/ })).toBeVisible();
+  await page.getByRole('button', { name: /Transmettre \(1\)/ }).click();
+  await expect(page.getByTestId('outbox-item')).toContainText('Reçu par le serveur');
+  const obs = await (await page.request.get('/api/observations', { headers: { 'x-demo-user': 'U-VET' } })).json();
+  expect(obs).toHaveLength(1);
+  expect(obs[0].eventTime).toEqual({ precision: 'DAY', date: '2026-03-12' });
+});
+
+test('import CSV : erreurs explicites, import bloqué, puis import réussi', async ({ page }) => {
+  await reset(page, false);
+  await role(page, /Vétérinaire enquêteur/);
+  await page.getByRole('link', { name: 'Import' }).click();
+  const bad = ['type;id;animal;lieu;lieu_arrivee;debut;fin;source', 'presence;P900;B-017;A;;2026-02-26T07:00;2026-02-26T15:00;ok', 'presence;P901;B-031;Q;;01/03/2026;;erreurs'].join('\n');
+  await page.getByLabel(/Ou coller le contenu/).fill(bad);
+  await page.getByRole('button', { name: 'Prévisualiser' }).click();
+  await expect(page.getByText('× 1 en erreur')).toBeVisible();
+  await expect(page.getByText(/Lieu « Q » inconnu/)).toBeVisible();
+  await expect(page.getByText(/utilisez le format AAAA-MM-JJ/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Importer/ })).toHaveCount(0);
+  await page.getByLabel(/Ou coller le contenu/).fill(bad.replace('presence;P901;B-031;Q;;01/03/2026;;erreurs', 'mouvement;MV901;N-777;M;E;2026-02-27T09:00;2026-02-27T10:30;registre'));
+  await page.getByRole('button', { name: 'Prévisualiser' }).click();
+  await expect(page.getByText(/Animal N-777 inconnu : il sera créé/)).toBeVisible();
+  await page.getByRole('button', { name: 'Importer 2 enregistrement(s)' }).click();
+  await expect(page.getByText(/2 enregistrement\(s\) importé\(s\) en révision 1 ; animaux créés : N-777/)).toBeVisible();
+});
+
+test('anomalie B-060 : correction du mouvement par l’agent, nouvelle analyse, historique, paramètres modifiés', async ({ page }) => {
+  await reset(page, true);
+  await role(page, /Vétérinaire enquêteur/);
+  await openInvestigation(page);
+  await page.getByRole('listitem').filter({ hasText: 'Vérifier l’enregistrement MV6' }).getByRole('button', { name: 'Demander à un agent' }).click();
+  const invUrl = page.url();
+  await switchRole(page, /Agent de terrain/);
+  await page.getByRole('link', { name: 'Vérifications' }).click();
+  await page.getByRole('button', { name: 'Compléter' }).click();
+  await expect(page.getByRole('group', { name: 'Départ' })).toBeVisible();
+  await page.locator('#fix-start-time').fill('05:00');
+  await page.getByLabel('Source de l’information').fill('registre de l’élevage D');
+  await page.getByRole('button', { name: 'Enregistrer la correction' }).click();
+  await expect(page.getByText(/Révision 2 enregistrée/)).toBeVisible();
+  await switchRole(page, /Vétérinaire enquêteur/);
+  await page.goto(invUrl);
+  await page.getByRole('button', { name: 'Relancer l’analyse' }).click();
+  await expect(page.getByRole('region', { name: /Ce qui a changé/ })).toContainText('0 résultat modifié, 0 ajouté, 1 retiré.');
+  await page.getByText('Historique du dossier').click();
+  await expect(page.getByText('Enregistrement corrigé (nouvelle révision)')).toBeVisible();
+  await page.getByText('Modifier les paramètres et relancer').click();
+  await page.getByLabel('Profondeur', { exact: true }).selectOption('1');
+  await page.getByRole('button', { name: 'Lancer avec ces paramètres' }).click();
+  await expect(page.getByRole('region', { name: /Ce qui a changé — analyse n° 2 → n° 3/ })).toContainText('1 retiré');
+  await expect(page.getByRole('region', { name: /Ce qui a changé/ })).toContainText('Paramètres d’analyse modifiés');
+});
+
+test('grande projection (1920 px), surlignage croisé schéma / liste / preuves, mouvement réduit', async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce' });
+  const page = await ctx.newPage();
+  await reset(page, true);
+  await role(page, /Vétérinaire enquêteur/);
+  await openInvestigation(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+  // liste → schéma : le chemin sélectionné est épaissi
+  await page.locator('[data-key="B|P2|P4"]').click();
+  await expect(page.locator('svg path[stroke-width="5"]')).toHaveCount(1);
+  await expect(page.getByRole('region', { name: 'Pourquoi ce résultat ?' })).toContainText('B-031 à Marché M');
+  // légende du schéma → liste
+  await page.getByRole('button', { name: /B-044 — chemin exclu/ }).click();
+  await expect(page.locator('[data-key="B|P2|P5"]')).toHaveAttribute('aria-pressed', 'true');
+  // mouvement réduit : aucune animation de surlignage
+  const anim = await page.evaluate(() => {
+    const el = document.createElement('div');
+    el.className = 'flash';
+    document.body.append(el);
+    return getComputedStyle(el).animationName;
+  });
+  expect(anim).toBe('none');
+  await page.screenshot({ path: 'test-results/console-1920.png' });
+  await ctx.close();
+});
+
+test('scanner QR : repli explicite si le navigateur ne le permet pas ; QR présent sur la fiche', async ({ page }) => {
+  await role(page, /Agent de terrain/);
+  await page.getByRole('link', { name: /B-017/ }).click();
+  await expect(page.getByRole('img', { name: 'QR code menant à la fiche B-017' })).toBeVisible();
+  await page.goto('/#/scan');
+  const supported = await page.evaluate(() => 'BarcodeDetector' in window);
+  if (supported) await expect(page.getByRole('button', { name: 'Activer la caméra' })).toBeVisible();
+  else await expect(page.getByText(/ne permet pas la lecture de QR code/)).toBeVisible();
+});
+
+test('aide IA désactivée sans fournisseur : message clair, saisie manuelle intacte', async ({ page }) => {
+  await role(page, /Agent de terrain/);
+  await page.getByRole('link', { name: /B-017/ }).click();
+  await page.getByRole('button', { name: 'Nouvelle observation' }).click();
+  await page.getByText('Aide à la saisie (IA, facultative)').click();
+  await expect(page.getByText(/Aide IA désactivée : aucun fournisseur n’est configuré/)).toBeVisible();
+  await expect(page.getByLabel('Observation', { exact: true })).toBeEditable();
+});
