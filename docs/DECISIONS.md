@@ -1,0 +1,10 @@
+# Décisions
+
+- **D-01 (15/11)** — Code destiné au concours en attente : l'autorisation du développement préalable n'est pas confirmée. L'usage de l'IA est autorisé, ce qui n'autorise pas le code préparé. Seuls cadrage, scénario, maquettes et spécifications de tests sont produits.
+- **D-02 (15/11)** — Stack validée par le porteur : monorepo pnpm TypeScript ; moteur pur `packages/domain` ; contrats Zod ; API Fastify ; PostgreSQL ; React + Vite + Tailwind ; Dexie (IndexedDB) ; Vitest ; Playwright ; schéma SVG (pas de carte externe).
+- **D-03 (15/11)** — Historique des analyses : **instantané des données utilisées** stocké avec chaque analyse (JSON des enregistrements pris en compte, avec leur identifiant et numéro de révision) + `snapshotHash` + `engineVersion` + paramètres. En parallèle, les corrections créent des révisions en ajout seul (jamais d'écrasement). Ce que cela permet réellement : relire une ancienne analyse exactement telle qu'elle a été calculée, et la recalculer à l'identique avec la même version du moteur. Ce que cela ne permet pas : reconstituer l'état complet de la base à une date donnée (hors données incluses dans l'instantané). Choisi car plus simple que des requêtes « à la révision N » sur toutes les tables.
+- **D-04 (15/11)** — Authentification : sélecteur de rôle nommé « mode démonstration ». Interdit de mise en ligne publique avec ce seul mécanisme.
+- **D-05 (15/11)** — IA du produit : aucune API payante. Saisie manuelle complète. Seule une interface `StructuringProvider` remplaçable est prévue, sans implémentation simulée présentée comme réelle.
+- **D-06 (15/11)** — Démo sur un ordinateur Windows avec Docker déclaré installé (fonctionnement non vérifié). PostgreSQL via Docker Compose par défaut ; alternative documentée : PostgreSQL installé nativement sous Windows. Scripts en `pnpm`/Node, pas de scripts bash obligatoires.
+- **D-07 (15/11)** — Temps : stockage UTC, affichage `Africa/Abidjan`, intervalles semi-ouverts, précision explicite (`INSTANT`/`DAY`/`INTERVAL`/`UNKNOWN`), jamais de minuit implicite.
+- **D-08 (15/11)** — Profondeur d'analyse limitée à 2 pour la démonstration.

@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maquette — Console d'enquête Sentinelle</title>
+<style>
+  /* Tokens visuels (intention ; contrastes à mesurer) */
+  :root{
+    --bg:#FAF8F3; --surface:#FFFFFF; --surface-2:#F3F0E8; --border:#E2DDD1;
+    --text:#1F2933; --text-2:#52606D; --muted:#7B8794;
+    --primary:#0F5F5C; --primary-ink:#FFFFFF; --primary-soft:#E3F0EE;
+    --amber:#8A5A00; --amber-soft:#FBF0D9; --amber-line:#D89B2B;
+    --red:#A61B1B; --red-soft:#FBE7E5;
+    --blue:#1D4F91; --blue-soft:#E4ECF7;
+    --excluded:#52606D; --excluded-soft:#EEF0F2;
+    --radius:10px; --shadow:0 1px 2px rgba(31,41,51,.06),0 2px 8px rgba(31,41,51,.05);
+    --font:"Inter","Segoe UI",system-ui,sans-serif; --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.5 var(--font)}
+  .num,.id{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:.92em}
+  a{color:var(--blue)}
+  :focus-visible{outline:3px solid var(--blue);outline-offset:2px;border-radius:4px}
+  .synthetic{background:var(--text);color:#fff;font-size:12px;text-align:center;padding:4px 8px;letter-spacing:.02em}
+  .app{display:grid;grid-template-columns:64px 1fr;min-height:calc(100vh - 25px)}
+  nav.rail{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 0}
+  .logo{width:36px;height:36px;border-radius:9px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:700;margin-bottom:10px}
+  .rail a{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;color:var(--text-2);text-decoration:none;font-size:11px}
+  .rail a[aria-current]{background:var(--primary-soft);color:var(--primary);font-weight:600}
+  header.case{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--surface)}
+  header h1{font-size:18px;margin:0;font-weight:650}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:var(--text-2);font-size:13px}
+  .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:2px 10px;background:var(--surface-2);font-size:12px}
+  .pill.ok{border-color:#B9D8D3;background:var(--primary-soft);color:var(--primary)}
+  .spacer{flex:1}
+  .btn{min-height:40px;padding:0 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:inherit;font-weight:550;cursor:pointer}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
+  main.console{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16px 24px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .card h2{font-size:14px;margin:0;padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  .card h2 small{font-weight:400;color:var(--muted)}
+  .params{display:flex;flex-wrap:wrap;gap:6px 16px;padding:10px 16px;font-size:12.5px;color:var(--text-2);border-bottom:1px solid var(--border)}
+  .params b{color:var(--text);font-weight:600}
+  .tag-validate{color:var(--amber);background:var(--amber-soft);border-radius:4px;padding:0 6px;font-weight:600}
+  .schema{padding:8px 12px}
+  .schema svg{width:100%;height:auto;display:block}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;padding:8px 16px 14px;font-size:12px;color:var(--text-2)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  /* Statuts : icône + libellé, jamais la couleur seule */
+  .status{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;border-radius:6px;padding:2px 8px;white-space:nowrap}
+  .status::before{font-family:var(--mono);font-weight:700}
+  .s-mov{background:var(--primary-soft);color:var(--primary)} .s-mov::before{content:"→"}
+  .s-link{background:var(--blue-soft);color:var(--blue)} .s-link::before{content:"≈"}
+  .s-ins{background:var(--amber-soft);color:var(--amber)} .s-ins::before{content:"?"}
+  .s-exc{background:var(--excluded-soft);color:var(--excluded)} .s-exc::before{content:"∅"}
+  .s-ano{background:var(--red-soft);color:var(--red)} .s-ano::before{content:"!"}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-weight:600;color:var(--text-2);font-size:12px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+  td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  tr.selected td{background:#FFF8E8}
+  tr.selected td:first-child{box-shadow:inset 3px 0 0 var(--amber-line)}
+  .group td{background:var(--surface-2);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;padding:6px 12px}
+  aside{display:flex;flex-direction:column;gap:16px}
+  .why{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+  .why p{margin:0}
+  .why h3{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 4px}
+  .calc{font-family:var(--mono);font-size:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px;line-height:1.6}
+  .evidence li{margin-bottom:4px}
+  .limit{border-left:3px solid var(--amber-line);background:var(--amber-soft);padding:8px 10px;border-radius:0 6px 6px 0;font-size:13px}
+  ul{margin:0;padding-left:18px}
+  .tasks{list-style:none;padding:0;margin:0}
+  .tasks li{display:flex;gap:10px;align-items:flex-start;padding:12px 16px;border-bottom:1px solid var(--border)}
+  .tasks li:last-child{border-bottom:0}
+  .tasks .t-body{flex:1}
+  .tasks .t-body div{color:var(--text-2);font-size:12.5px}
+  .footnote{font-size:12px;color:var(--muted);padding:0 24px 20px}
+  .absent{padding:10px 16px;font-size:12.5px;color:var(--text-2);border-top:1px solid var(--border)}
+  @media (max-width:1100px){ main.console{grid-template-columns:1fr} }
+  @media (max-width:640px){ .app{grid-template-columns:1fr} nav.rail{display:none} main.console{padding:12px} header.case{padding:12px} .hide-sm{display:none} .schema,.legend{display:none} .schema-note{display:block!important} }
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important;animation:none!important} }
+</style>
+</head>
+<body>
+<div class="synthetic" role="note">Maquette statique — données synthétiques — mode démonstration (pas d'authentification sécurisée)</div>
+<div class="app">
+  <nav class="rail" aria-label="Navigation principale">
+    <div class="logo" aria-hidden="true">S</div>
+    <a href="#">Fiches</a>
+    <a href="#">Signal.</a>
+    <a href="#" aria-current="page">Enquêtes</a>
+    <a href="#">Tâches</a>
+  </nav>
+  <div>
+    <header class="case">
+      <div>
+        <h1>Enquête ENQ-001 · Signalement sur <span class="id">B-017</span></h1>
+        <div class="meta">
+          <span>Élevage C · baisse d'appétit observée le <span class="num">12/03/2026 07:30</span></span>
+        </div>
+      </div>
+      <div class="meta">
+        <span class="pill">Dossier : en cours d'examen</span>
+        <span class="pill ok">● Serveur joignable</span>
+        <span class="pill">Données du <span class="num">15/11 17:04</span></span>
+        <span class="pill">Rôle : vétérinaire (démo)</span>
+      </div>
+      <div class="spacer"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn">Comparer les analyses</button>
+      <button class="btn primary">Relancer l'analyse</button></div>
+    </header>
+
+    <main class="console">
+      <section aria-labelledby="h-results" style="display:flex;flex-direction:column;gap:16px;min-width:0">
+        <div class="card">
+          <h2 id="h-schema">Parcours et liens <small>— analyse n° 1 · moteur v0.1 · instantané <span class="num">#a3f9…</span></small></h2>
+          <div class="params">
+            <span>Fenêtre : <b class="num">25/02 → 13/03/2026</b> (choisie par l'enquêteur)</span>
+            <span>Règle : <b>R-B1 chevauchement de présence</b> <span class="tag-validate">règle de démonstration à valider</span></span>
+            <span>Profondeur max : <b class="num">2</b></span>
+          </div>
+          <div class="schema">
+            <svg viewBox="0 96 760 270" role="img" aria-labelledby="svg-t svg-d">
+              <title id="svg-t">Schéma des lieux et chemins de l'analyse n° 1</title>
+              <desc id="svg-d">B-017 va de l'Élevage A au Marché M puis à l'Élevage C. Depuis le Marché M, trois chemins vers l'Élevage D : B-031 lien potentiel, B-044 exclu, B-052 information insuffisante. L'Élevage E est proche de C sans mouvement enregistré. Les mêmes informations sont dans le tableau ci-dessous.</desc>
+              <defs>
+                <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#0F5F5C"/></marker>
+                <marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#1D4F91"/></marker>
+                <marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#B07A10"/></marker>
+                <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9AA5B1"/></marker>
+              </defs>
+              <!-- B-017 : niveau A -->
+              <line x1="118" y1="150" x2="282" y2="150" stroke="#0F5F5C" stroke-width="3" marker-end="url(#arw)"/>
+              <text x="200" y="138" text-anchor="middle" font-size="12" fill="#0F5F5C" font-weight="600">B-017 · 06:00→08:00</text>
+              <line x1="378" y1="150" x2="542" y2="150" stroke="#0F5F5C" stroke-width="3" marker-end="url(#arw)"/>
+              <text x="460" y="138" text-anchor="middle" font-size="12" fill="#0F5F5C" font-weight="600">B-017 · 16:00→18:00</text>
+              <!-- Niveau B vers D -->
+              <path d="M340,182 C340,240 470,262 552,262" fill="none" stroke="#1D4F91" stroke-width="2.5" marker-end="url(#arb)"/>
+              
+              <path d="M318,182 C300,272 450,290 552,276" fill="none" stroke="#B07A10" stroke-width="3" stroke-dasharray="2 5" stroke-linecap="round" marker-end="url(#ara)"/>
+              
+              <path d="M362,182 C380,215 480,240 552,250" fill="none" stroke="#9AA5B1" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#arg)"/>
+              
+              <!-- E : proximité sans mouvement -->
+              <line x1="640" y1="182" x2="640" y2="228" stroke="#C9C3B6" stroke-width="1.5" stroke-dasharray="1 4"/>
+              
+              <!-- Noeuds -->
+              <g font-size="13" font-weight="600" text-anchor="middle">
+                <rect x="20" y="118" width="98" height="64" rx="10" fill="#fff" stroke="#E2DDD1"/><text x="69" y="146">Élevage A</text><text x="69" y="166" font-size="11" font-weight="400" fill="#7B8794">origine</text>
+                <rect x="282" y="118" width="96" height="64" rx="10" fill="#fff" stroke="#0F5F5C" stroke-width="1.5"/><text x="330" y="146">Marché M</text><text x="330" y="166" font-size="11" font-weight="400" fill="#7B8794">08:00–16:00</text>
+                <rect x="542" y="118" width="196" height="64" rx="10" fill="#E3F0EE" stroke="#0F5F5C" stroke-width="1.5"/><text x="640" y="146">Élevage C</text><text x="640" y="166" font-size="11" font-weight="400" fill="#0F5F5C">signalement · 12/03</text>
+                <rect x="552" y="236" width="88" height="54" rx="10" fill="#fff" stroke="#1D4F91" stroke-width="1.5"/><text x="596" y="260">Élevage D</text><text x="596" y="278" font-size="11" font-weight="400" fill="#1D4F91">à vérifier</text>
+                <rect x="660" y="236" width="86" height="54" rx="10" fill="#fff" stroke="#C9C3B6" stroke-dasharray="4 3"/><text x="703" y="260" fill="#52606D">Élevage E</text><text x="703" y="278" font-size="11" font-weight="400" fill="#7B8794">non évalué</text>
+              </g>
+              <text x="648" y="210" font-size="11" fill="#7B8794">1,5 km</text>
+              <g font-size="11.5">
+                <text x="20" y="318" fill="#52606D" font-weight="600">Chemins vers l'Élevage D :</text>
+                <line x1="20" y1="336" x2="48" y2="336" stroke="#1D4F91" stroke-width="2.5"/><text x="54" y="340" fill="#1D4F91">≈ B-031 lien potentiel</text>
+                <line x1="200" y1="336" x2="228" y2="336" stroke="#B07A10" stroke-width="3" stroke-dasharray="2 5" stroke-linecap="round"/><text x="234" y="340" fill="#8A5A00" font-weight="700">? B-052 heures inconnues (sélectionné)</text>
+                <line x1="490" y1="336" x2="518" y2="336" stroke="#9AA5B1" stroke-width="2" stroke-dasharray="8 6"/><text x="524" y="340" fill="#52606D">∅ B-044 exclu</text>
+                <text x="20" y="358" fill="#7B8794">Élevage E : proche de C, aucun mouvement enregistré, non évalué.</text>
+              </g>
+            </svg>
+          </div>
+          <p class="schema-note" style="display:none;margin:0;padding:10px 16px;font-size:12.5px;color:var(--text-2)">Schéma affiché sur grand écran. La liste ci-dessous contient les mêmes informations.</p>
+          <div class="legend" aria-hidden="true">
+            <span><span class="status s-mov">Mouvement enregistré</span></span>
+            <span><span class="status s-link">Lien potentiel</span></span>
+            <span><span class="status s-ins">Information insuffisante</span></span>
+            <span><span class="status s-exc">Chemin exclu</span></span>
+            <span><span class="status s-ano">Anomalie de données</span></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 id="h-results">Résultats <small>— vue liste, équivalente au schéma</small></h2>
+          <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th scope="col">Statut</th><th scope="col">Chemin</th><th scope="col">Quand</th><th scope="col" class="hide-sm">Preuves</th></tr></thead>
+            <tbody>
+              <tr class="group"><td colspan="4">Parcours enregistré de B-017</td></tr>
+              <tr><td><span class="status s-mov">Mouvement enregistré</span></td><td>Élevage A → Marché M</td><td class="num">01/03 06:00→08:00</td><td class="id hide-sm">MV1</td></tr>
+              <tr><td><span class="status s-mov">Mouvement enregistré</span></td><td>Marché M → Élevage C</td><td class="num">01/03 16:00→18:00</td><td class="id hide-sm">MV2</td></tr>
+              <tr class="group"><td colspan="4">Liens potentiels selon la règle R-B1 (à valider)</td></tr>
+              <tr><td><span class="status s-link">Lien potentiel</span></td><td><span class="id">B-031</span> au Marché M</td><td class="num">chevauchement 10:00–14:00</td><td class="id hide-sm">P2, P4</td></tr>
+              <tr><td><span class="status s-link">Lien potentiel</span></td><td>Élevage D, via <span class="id">B-031</span> · profondeur 2</td><td class="num">arrivée 01/03 17:00</td><td class="id hide-sm">MV3</td></tr>
+              <tr class="group"><td colspan="4">Ce que les données ne permettent pas de conclure</td></tr>
+              <tr class="selected" aria-selected="true"><td><span class="status s-ins">Information insuffisante</span></td><td><span class="id">B-052</span> au Marché M</td><td>01/03, heures inconnues</td><td class="id hide-sm">P2, P6</td></tr>
+              <tr><td><span class="status s-exc">Chemin exclu</span></td><td><span class="id">B-044</span> au Marché M</td><td class="num">16:30–17:30</td><td class="id hide-sm">P2, P5</td></tr>
+              <tr><td><span class="status s-ano">Anomalie de données</span></td><td><span class="id">B-060</span> Élevage D → Marché M</td><td>arrivée avant départ</td><td class="id hide-sm">MV6</td></tr>
+            </tbody>
+          </table>
+          </div>
+          <div class="absent">
+            <b>Élevage E</b> : lieu proche sans mouvement enregistré — la proximité n'est pas évaluée par cette recherche (ni lien, ni exclusion).<br>
+            <b>Élevage C</b> : aucun autre animal enregistré pendant la fenêtre — l'absence d'enregistrement ne prouve pas l'absence d'autres animaux.
+          </div>
+        </div>
+      </section>
+
+      <aside>
+        <div class="card" aria-labelledby="h-why">
+          <h2 id="h-why">Pourquoi ce résultat ?</h2>
+          <div class="why">
+            <p><span class="status s-ins">Information insuffisante</span></p>
+            <p>B-052 est enregistré au Marché M le <b>01/03</b>, sans heure. B-017 y était de <span class="num">08:00</span> à <span class="num">16:00</span>. Selon les heures réelles de B-052, les présences peuvent se chevaucher ou non : la recherche ne peut ni établir ni exclure un lien.</p>
+            <div class="calc" aria-label="Calcul">
+              B-017 : [08:00, 16:00)<br>
+              B-052 : début et fin ∈ [00:00, 24:00)<br>
+              chevauchement certain ? non<br>
+              exclusion certaine ? non<br>
+              → indéterminé
+            </div>
+            <div>
+              <h3>Preuves</h3>
+              <ul class="evidence">
+                <li><span class="id">P2</span> présence B-017, Marché M · rév. 1 · saisie agent</li>
+                <li><span class="id">P6</span> présence B-052, Marché M · rév. 1 · précision : jour</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Règle et paramètres</h3>
+              <p>R-B1, intervalles [début, fin), sans durée minimale. <span class="tag-validate">à valider</span></p>
+            </div>
+            <div class="limit">Aucune heure n'a été supposée. Le passage de B-052 vers l'Élevage D (<span class="id">MV5</span>) reste à préciser.</div>
+          </div>
+        </div>
+
+        <div class="card" aria-labelledby="h-tasks">
+          <h2 id="h-tasks">Informations à vérifier <small>— priorité administrative, pas clinique</small></h2>
+          <ul class="tasks">
+            <li><span class="status s-ins">À compléter</span><div class="t-body">Préciser les heures de présence de <span class="id">B-052</span> au Marché M le 01/03<div>Débloque 1 résultat · assignable à un agent</div></div><button class="btn">Demander</button></li>
+            <li><span class="status s-ano">À vérifier</span><div class="t-body">Heures incohérentes du mouvement de <span class="id">B-060</span><div>Anomalie de données, distincte du signalement</div></div><button class="btn">Demander</button></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+    <p class="footnote">Les résultats sont des pistes de vérification calculées à partir des données enregistrées. Ils ne constituent ni un diagnostic, ni une preuve de contact, ni une preuve de transmission. « Exclu par cette recherche » ne signifie pas « sans risque sanitaire ».</p>
+  </div>
+</div>
+</body>
+</html>
