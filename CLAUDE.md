@@ -66,7 +66,7 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - Interface et docs en français (accents corrects) ; code et identifiants en anglais.
 - Statuts jamais portés par la seule couleur. Mention « données synthétiques » visible.
 - « Mode démonstration » pour le sélecteur de rôle — jamais « authentification sécurisée » (D-04).
-- IA produit : aucune API payante ; interface remplaçable seulement ; aucun faux appel (D-05).
+- IA produit : désactivée par défaut ; fournisseur réel seulement si une clé est configurée côté serveur ; aucun faux appel (D-05, D-15).
 - Ne jamais déclarer un test exécuté sans l'avoir exécuté ; sinon écrire « non exécuté » + commande.
 - Distinguer vérifications faites dans l'environnement Claude et celles à refaire sur Windows.
 
