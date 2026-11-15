@@ -15,11 +15,11 @@ export const REFERENCE_SCENARIO: DataSnapshot = {
     { id: 'B-060', tag: 'B-060' },
   ],
   locations: [
-    { id: 'A', code: 'A', name: 'Élevage A', kind: 'FARM', position: { x: 10, y: 50 } },
-    { id: 'M', code: 'M', name: 'Marché M', kind: 'MARKET', position: { x: 42, y: 50 } },
-    { id: 'C', code: 'C', name: 'Élevage C', kind: 'FARM', position: { x: 78, y: 50 } },
-    { id: 'D', code: 'D', name: 'Élevage D', kind: 'FARM', position: { x: 70, y: 85 } },
-    { id: 'E', code: 'E', name: 'Élevage E', kind: 'FARM', position: { x: 90, y: 85 } },
+    { id: 'A', code: 'A', name: 'Élevage A', kind: 'FARM', position: { x: 4, y: 30 } },
+    { id: 'M', code: 'M', name: 'Marché M', kind: 'MARKET', position: { x: 36, y: 30 } },
+    { id: 'C', code: 'C', name: 'Élevage C', kind: 'FARM', position: { x: 78, y: 30 } },
+    { id: 'D', code: 'D', name: 'Élevage D', kind: 'FARM', position: { x: 58, y: 88 } },
+    { id: 'E', code: 'E', name: 'Élevage E', kind: 'FARM', position: { x: 92, y: 88 } },
   ],
   presences: [
     { kind: 'presence', id: 'P1', rev: 1, animalId: 'B-017', locationId: 'A', start: { precision: 'UNKNOWN' }, end: { precision: 'INSTANT', at: t('03-01T06:00') }, verification: 'DECLARED', source: 'registre élevage (fictif)' },

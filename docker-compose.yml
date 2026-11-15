@@ -1,0 +1,16 @@
+# PostgreSQL serveur (optionnel). Par défaut, Sentinelle utilise PostgreSQL embarqué (PGlite) sans Docker.
+# Usage : docker compose up -d   puis   DATABASE_URL=postgres://sentinelle:sentinelle-demo@localhost:5432/sentinelle
+# Identifiants de démonstration locale uniquement — ne pas exposer ce service.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: sentinelle
+      POSTGRES_PASSWORD: sentinelle-demo
+      POSTGRES_DB: sentinelle
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - sentinelle-pg:/var/lib/postgresql/data
+volumes:
+  sentinelle-pg:

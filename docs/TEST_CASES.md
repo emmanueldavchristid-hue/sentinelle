@@ -1,6 +1,11 @@
 # Cas de tests — langage naturel
 
-Statut de tous les cas : **spécifiés, non implémentés, non exécutés** (code en attente, voir D-01).
+Statut au 15/11 (environnement Claude, Linux) — voir docs/STATUS.md pour les commandes :
+- **Moteur ENG-01→21** : implémentés et verts (`packages/domain/test/engine.test.ts`, + test de performance).
+- **SYN** : SYN-01/02/03/07 en test unitaire (`apps/web/src/local.test.ts`) et E2E ; SYN-04/05/06 en intégration API ; SYN-08 couvert par la vérification réelle `/api/health` (E2E avec simulation de coupure).
+- **SEC-01→04** : intégration API (`apps/api/test/api.test.ts`), dont isolation entre organisations.
+- **UI** : UI-01 partiel (choix de rôle et recherche au clavier), UI-02 (360 px, écrans agent), UI-04/05/08 vérifiés en E2E ou visuellement ; UI-03 (1920 px), UI-06 (surlignage croisé) et UI-07 (mouvement réduit) **non testés automatiquement**.
+- **IA** : non applicable (aucune IA dans le produit, D-05).
 Les identifiants (P1, MV3, R6…) renvoient au scénario de docs/DOMAIN.md §5.
 
 ## 1. Moteur (module pur, Vitest)

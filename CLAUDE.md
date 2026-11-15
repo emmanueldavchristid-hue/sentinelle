@@ -25,9 +25,9 @@ Ne pas compter sur une sauvegarde de dernière seconde. Commits aux étapes coh�
 - Branche de travail : `feat/sentinelle-demo`. Jamais de force-push. Jamais de fusion vers `main` sans accord.
 - Aucun secret, token ni `.env` versionné. Seul `.env.example` (sans valeurs sensibles).
 
-## Blocage en vigueur
-L'autorisation du développement avant le sprint n'est **pas confirmée** (D-01).
-Tant qu'elle ne l'est pas : cadrage, scénario, maquettes, spécifications de tests uniquement.
+## Règlement du concours
+L'autorisation du développement avant le sprint n'est **pas confirmée** (D-01). Le porteur a décidé
+de développer quand même (D-09) : tout le code est à **déclarer comme travail préalable** (docs/DEMO.md).
 Ne jamais marquer cette autorisation comme acquise.
 
 ## Architecture prévue (D-02)
@@ -42,7 +42,12 @@ Démo cible : un seul ordinateur Windows ; Postgres via Docker Compose, alternat
 Scripts portables (Node/pnpm), pas de bash obligatoire.
 
 ## Commandes
-Aucune pour l'instant (pas de code). À compléter dès l'initialisation du monorepo.
+- `pnpm install` · `pnpm demo` (build web + serveur unique http://localhost:3000) · `pnpm dev` (API 3000 + Vite 5173)
+- `pnpm test` (Vitest : domain, api avec PGlite en mémoire, web/outbox avec fake-indexeddb) · `pnpm typecheck`
+- `pnpm e2e` (build + Playwright ; ici : `CHROME_PATH=/usr/bin/google-chrome`, Chromium non téléchargeable)
+- `pnpm demo:reset [--avec-signalement]` (destructif, DEMO_MODE uniquement)
+- Base : PGlite dans `data/pglite` par défaut ; `DATABASE_URL` pour un serveur PostgreSQL ; `DATA_DIR=memory` pour une base volatile.
+- Migrations : `apps/api/src/migrations/NNN_*.sql`, appliquées au démarrage (table `schema_migrations`).
 
 ## Invariants métier (détails : docs/DOMAIN.md)
 - Niveau A (parcours du même animal) ≠ niveau B (liens potentiels selon règle) ≠ conclusions impossibles.
@@ -70,5 +75,6 @@ Aucune pour l'instant (pas de code). À compléter dès l'initialisation du mono
 - `docs/DOMAIN.md` — règles temporelles, statuts, scénario B-017 et résultats attendus
 - `docs/TEST_CASES.md` — cas de tests en langage naturel
 - `docs/DECISIONS.md` — décisions courtes
-- `docs/mockups/` — maquettes statiques (non destinées au concours)
-- `docs/DEMO.md` — à créer (script, préparation, réinitialisation, secours, limites)
+- `docs/mockups/` — maquette statique initiale
+- `docs/DEMO.md` — script, préparation, secours, limites, pitch, travaux à déclarer
+- `docs/DESIGN.md` — tokens, contrastes mesurés, principes
