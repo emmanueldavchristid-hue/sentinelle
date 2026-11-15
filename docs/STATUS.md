@@ -6,7 +6,7 @@
 - Dernier commit pertinent : « docs: cadrage M0 et scénario de référence M1a » (voir `git log`)
 
 ## Objectif courant
-- Jalon : M0 + M1a terminés côté documents ; M1b (moteur + tests exécutables) **bloqué** par D-01
+- Jalon : M1b→M5 (développement lancé par décision D-09)
 - Critère de réussite M1b : tests ENG-01 à ENG-21 (docs/TEST_CASES.md) verts sur le scénario B-017
 
 ## Travail terminé
@@ -28,5 +28,5 @@
 - Actions externes : push de la branche feat/sentinelle-demo vers GitHub (vérifier avec `git ls-remote origin`).
 
 ## Prochaine action
-- Si l'autorisation est confirmée : initialiser le monorepo pnpm, écrire les tests ENG-01→ENG-21 puis le moteur `packages/domain`.
+- Initialiser le monorepo, moteur + tests, API, web.
 - Sinon : rédiger docs/DEMO.md (script de 3 min) et la maquette mobile « fiche + déclaration hors connexion ».

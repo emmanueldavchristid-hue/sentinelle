@@ -1,0 +1,16 @@
+{
+  "name": "sentinelle",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=20.19" },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @sentinelle/api --filter @sentinelle/web dev",
+    "build": "pnpm --filter @sentinelle/web build",
+    "demo": "pnpm build && pnpm --filter @sentinelle/api start",
+    "demo:reset": "pnpm --filter @sentinelle/api reset",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "e2e": "pnpm --filter @sentinelle/web e2e"
+  }
+}
