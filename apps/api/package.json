@@ -6,6 +6,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "reset": "tsx src/reset.ts",
+    "user:create": "tsx src/user-create.ts",
     "typecheck": "tsc -p .",
     "test": "vitest run"
   },

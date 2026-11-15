@@ -12,6 +12,8 @@ export const DEMO_USERS = [
 ] as const;
 
 const TABLES = [
+  'sessions',
+  'import_batches',
   'audit_events',
   'idempotent_ops',
   'verification_tasks',

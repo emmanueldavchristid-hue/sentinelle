@@ -6,7 +6,7 @@
 - Dernier commit pertinent : db23f7f « feat: démonstrateur P0 complet… »
 
 ## Objectif courant
-- Jalon : P0 terminé et testé dans l'environnement Claude. Fonctions gelées en attente des vérifications sur Windows.
+- Jalon : M6/M7 — finition demandée par le porteur le 15/11 21:04 (démo P0 jugée prête). En cours : authentification réelle, import CSV, aide IA optionnelle, corrections de mouvements, historique, QR, tests manquants.
 - Critère de réussite suivant : `pnpm install && pnpm demo` et le script docs/DEMO.md réussis sur l'ordinateur Windows du porteur.
 
 ## Travail terminé

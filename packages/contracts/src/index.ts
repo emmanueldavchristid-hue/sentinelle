@@ -77,15 +77,19 @@ export const CreateInvestigationSchema = z.object({
   maxDepth: z.number().int().min(1).max(4).default(2),
 });
 
-/** Correction d'une présence par un agent : crée une révision, jamais d'écrasement. */
-export const PresenceCorrectionSchema = z.object({
+/** Correction par un agent : crée une révision, jamais d'écrasement. `kind` absent = présence (compatibilité). */
+const correctionBase = {
   idempotencyKey: z.uuid(),
   baseRev: z.number().int().min(1),
-  start: TemporalValueSchema,
-  end: TemporalValueSchema.nullable(),
   reason: z.string().trim().min(3, 'Indiquez la source de la correction').max(300),
-});
-export type PresenceCorrection = z.infer<typeof PresenceCorrectionSchema>;
+};
+export const PresenceCorrectionSchema = z.object({ kind: z.literal('presence'), ...correctionBase, start: TemporalValueSchema, end: TemporalValueSchema.nullable() });
+export const MovementCorrectionSchema = z.object({ kind: z.literal('movement'), ...correctionBase, departure: TemporalValueSchema, arrival: TemporalValueSchema });
+export const RecordCorrectionSchema = z.preprocess(
+  (v) => (v && typeof v === 'object' && !('kind' in v) ? { ...v, kind: 'presence' } : v),
+  z.discriminatedUnion('kind', [PresenceCorrectionSchema, MovementCorrectionSchema]),
+);
+export type RecordCorrection = z.infer<typeof RecordCorrectionSchema>;
 
 export const ObservationStatusSchema = z.enum(['NEW', 'UNDER_INVESTIGATION', 'CLOSED']);
 export const TaskStatusSchema = z.enum(['OPEN', 'REQUESTED', 'DONE']);

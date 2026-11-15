@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
@@ -12,6 +12,7 @@ import {
   analyze,
   diffAnalyses,
   ENGINE_VERSION,
+  bounds,
   presenceBounds,
   RULE_RB1,
   stableStringify,
@@ -20,52 +21,26 @@ import {
   type ApiError,
   CreateInvestigationSchema,
   ObservationSyncSchema,
-  PresenceCorrectionSchema,
+  RecordCorrectionSchema,
   RecordDataSchema,
   RunRequestSchema,
 } from '@sentinelle/contracts';
 import type { Db, Queryable } from './db.js';
 import { resetAndSeed } from './seed.js';
+import { HttpError, parse, sha256, type User } from './http.js';
+import { type AuthConfig, registerAuth, sessionUser } from './auth.js';
+import { registerImport } from './import.js';
+import { type StructuringProvider, registerAssist } from './assist.js';
 
 export interface AppOptions {
   db: Db;
   demoMode: boolean;
   webDist?: string;
   logger?: boolean;
+  auth?: Partial<AuthConfig>;
+  structuringProvider?: StructuringProvider | null;
+  aiLimits?: { timeoutMs?: number; maxCallsPerDay?: number };
 }
-
-interface User {
-  id: string;
-  org_id: string;
-  name: string;
-  role: 'AGENT' | 'VET';
-}
-
-class HttpError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string,
-    public extra: Record<string, unknown> = {},
-  ) {
-    super(message);
-  }
-}
-
-function parse<T>(schema: z.ZodType<T>, data: unknown): T {
-  const r = schema.safeParse(data);
-  if (!r.success) {
-    const fields: Record<string, string> = {};
-    for (const issue of r.error.issues) {
-      const k = issue.path.join('.') || '_';
-      if (!fields[k]) fields[k] = issue.message;
-    }
-    throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields });
-  }
-  return r.data;
-}
-
-const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export async function buildApp(opts: AppOptions) {
   const { db } = opts;
@@ -82,8 +57,42 @@ export async function buildApp(opts: AppOptions) {
     return reply.status(500).send({ error: 'INTERNAL', message: 'Erreur interne du serveur' });
   });
 
-  // ---------- Session : MODE DÉMONSTRATION (sélecteur de rôle, pas d'authentification sécurisée) ----------
+  // En-têtes de sécurité de base.
+  app.addHook('onSend', async (_req, reply, payload) => {
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Referrer-Policy', 'no-referrer');
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+    reply.header(
+      'Content-Security-Policy',
+      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    );
+    return payload;
+  });
+
+  // Requêtes modifiantes hors mode démo : l'en-tête Origin, s'il est présent, doit correspondre à l'hôte (protection CSRF en plus de SameSite=Strict).
+  app.addHook('onRequest', async (req) => {
+    if (opts.demoMode || req.method === 'GET' || req.method === 'HEAD') return;
+    const origin = req.headers.origin;
+    if (!origin) return;
+    let host: string | null = null;
+    try {
+      host = new URL(origin).host;
+    } catch {
+      host = null;
+    }
+    if (host !== req.headers.host) throw new HttpError(403, 'FORBIDDEN', 'Origine refusée');
+  });
+
+  /**
+   * Session.
+   * - Mode démonstration : en-tête x-demo-user (sélecteur de rôle, PAS une authentification sécurisée).
+   * - Hors mode démonstration : cookie de session httpOnly obtenu par identifiant + mot de passe.
+   */
   async function currentUser(req: FastifyRequest): Promise<User> {
+    const fromCookie = await sessionUser(db, req);
+    if (fromCookie) return fromCookie;
+    if (!opts.demoMode) throw new HttpError(401, 'UNAUTHENTICATED', 'Connexion requise');
     const id = req.headers['x-demo-user'];
     if (typeof id !== 'string' || !id) throw new HttpError(401, 'UNAUTHENTICATED', 'Choisissez un rôle (mode démonstration)');
     const u = (await db.query<User>('SELECT id, org_id, name, role FROM users WHERE id = $1', [id])).rows[0];
@@ -180,9 +189,22 @@ export async function buildApp(opts: AppOptions) {
   }
 
   // ---------- Routes publiques ----------
-  app.get('/api/health', async () => ({ ok: true, db: db.mode, demoMode: opts.demoMode, engineVersion: ENGINE_VERSION, serverTime: new Date().toISOString() }));
+  const ctx = { app, db, demoMode: opts.demoMode, currentUser, requireRole, audit: (q: Queryable, u: User | null, a: string, e: string, id: string, d?: unknown) => audit(q, u, a, e, id, d) };
+  registerAuth(ctx, opts.auth);
+  registerImport(ctx);
+  const assist = registerAssist(ctx, opts.structuringProvider ?? null, opts.aiLimits);
+
+  app.get('/api/health', async () => ({
+    ok: true,
+    db: db.mode,
+    demoMode: opts.demoMode,
+    engineVersion: ENGINE_VERSION,
+    ai: assist.status(),
+    serverTime: new Date().toISOString(),
+  }));
 
   app.get('/api/demo/users', async () => {
+    if (!opts.demoMode) throw new HttpError(404, 'NOT_FOUND', 'Mode démonstration désactivé');
     const rows = (await db.query<User & { org_name: string }>('SELECT u.id, u.name, u.role, u.org_id, o.name AS org_name FROM users u JOIN organizations o ON o.id = u.org_id ORDER BY u.org_id, u.role, u.id')).rows;
     return { mode: 'Mode démonstration — pas d’authentification sécurisée', users: rows };
   });
@@ -424,19 +446,23 @@ export async function buildApp(opts: AppOptions) {
     const u = await currentUser(req);
     requireRole(u, 'AGENT');
     const recordId = (req.params as { id: string }).id;
-    const body = parse(PresenceCorrectionSchema, req.body);
+    const body = parse(RecordCorrectionSchema, req.body);
     const replay = (await db.query<{ response: unknown }>('SELECT response FROM idempotent_ops WHERE key = $1', [body.idempotencyKey])).rows[0];
     if (replay) return reply.status(200).send({ ...json<object>(replay.response), duplicate: true });
 
-    const b = presenceBounds(body.start, body.end);
-    if (b.endMax < b.startMin) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { end: 'La fin doit suivre le début' } });
+    if (body.kind === 'presence') {
+      const b = presenceBounds(body.start, body.end);
+      if (b.endMax < b.startMin) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { end: 'La fin doit suivre le début' } });
+    } else if (bounds(body.arrival).max < bounds(body.departure).min) {
+      throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { arrival: 'L’arrivée doit suivre le départ' } });
+    }
 
     const response = await db.tx(async (q) => {
       const cur = (
         await q.query<{ rev: number; kind: string; data: unknown }>('SELECT rev, kind, data FROM record_revisions WHERE record_id = $1 AND org_id = $2 ORDER BY rev DESC LIMIT 1', [recordId, u.org_id])
       ).rows[0];
       if (!cur) throw new HttpError(404, 'NOT_FOUND', 'Enregistrement introuvable');
-      if (cur.kind !== 'presence') throw new HttpError(400, 'VALIDATION', 'Seules les présences sont corrigeables dans ce démonstrateur');
+      if (cur.kind !== body.kind) throw new HttpError(400, 'VALIDATION', 'Type de correction incompatible avec l’enregistrement');
       if (cur.rev !== body.baseRev) {
         throw new HttpError(409, 'CONFLICT', `Conflit : la révision ${cur.rev} existe déjà (vous corrigiez la révision ${body.baseRev}). Rien n’a été écrasé.`, {
           currentRev: cur.rev,
@@ -444,16 +470,36 @@ export async function buildApp(opts: AppOptions) {
         });
       }
       const prev = json<Record<string, unknown>>(cur.data);
-      const data = parse(RecordDataSchema, { ...prev, start: body.start, end: body.end, verification: 'DECLARED', revisionNote: body.reason, source: `${u.name}` });
+      const changes = body.kind === 'presence' ? { start: body.start, end: body.end } : { departure: body.departure, arrival: body.arrival };
+      const data = parse(RecordDataSchema, { ...prev, ...changes, verification: 'DECLARED', revisionNote: body.reason, source: `${u.name}` });
       const rev = cur.rev + 1;
-      await q.query('INSERT INTO record_revisions(record_id, rev, org_id, kind, data, author_id, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)', [recordId, rev, u.org_id, 'presence', JSON.stringify(data), u.id, body.reason]);
-      await q.query(`UPDATE verification_tasks SET status = 'DONE', done_at = now(), done_rev = $1 WHERE record_id = $2 AND org_id = $3 AND kind = 'COMPLETE_PRESENCE' AND status <> 'DONE'`, [rev, recordId, u.org_id]);
+      await q.query('INSERT INTO record_revisions(record_id, rev, org_id, kind, data, author_id, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)', [recordId, rev, u.org_id, body.kind, JSON.stringify(data), u.id, body.reason]);
+      await q.query(`UPDATE verification_tasks SET status = 'DONE', done_at = now(), done_rev = $1 WHERE record_id = $2 AND org_id = $3 AND status <> 'DONE'`, [rev, recordId, u.org_id]);
       const res = { recordId, rev, previousRev: cur.rev };
-      await q.query('INSERT INTO idempotent_ops(key, op, response) VALUES ($1,$2,$3)', [body.idempotencyKey, 'presence_revision', JSON.stringify(res)]);
+      await q.query('INSERT INTO idempotent_ops(key, op, response) VALUES ($1,$2,$3)', [body.idempotencyKey, 'record_revision', JSON.stringify(res)]);
       await audit(q, u, 'RECORD_REVISED', 'record', recordId, { rev, reason: body.reason });
       return res;
     });
     return reply.status(201).send({ ...response, duplicate: false });
+  });
+
+  /** Historique du dossier : journal d'audit de l'enquête, du signalement, des tâches et des enregistrements concernés. */
+  app.get('/api/investigations/:id/history', async (req) => {
+    const u = await currentUser(req);
+    requireRole(u, 'VET');
+    const inv = await getInvestigation(db, u, (req.params as { id: string }).id);
+    const tasks = (await db.query<{ id: string; record_id: string }>('SELECT id::text AS id, record_id FROM verification_tasks WHERE investigation_id = $1', [inv.id])).rows;
+    return (
+      await db.query(
+        `SELECT a.at, a.action, a.entity, a.entity_id AS "entityId", a.detail, u.name AS "actor"
+         FROM audit_events a LEFT JOIN users u ON u.id = a.actor_id
+         WHERE a.org_id = $1 AND (
+           (a.entity = 'investigation' AND a.entity_id = $2) OR (a.entity = 'observation' AND a.entity_id = $3)
+           OR (a.entity = 'task' AND a.entity_id = ANY($4)) OR (a.entity = 'record' AND a.entity_id = ANY($5)))
+         ORDER BY a.at, a.id`,
+        [u.org_id, inv.id, inv.observation_id, tasks.map((t) => t.id), tasks.map((t) => t.record_id)],
+      )
+    ).rows.map((r) => ({ ...r, detail: json((r as { detail: unknown }).detail) }));
   });
 
   app.get('/api/records/:id/revisions', async (req) => {

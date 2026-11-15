@@ -11,4 +11,10 @@ export const config = {
   dataDir: process.env.DATA_DIR ?? resolve(root, 'data/pglite'),
   demoMode: (process.env.DEMO_MODE ?? 'true') === 'true',
   webDist: process.env.WEB_DIST ?? resolve(root, 'apps/web/dist'),
+  secureCookie: process.env.COOKIE_SECURE === 'true',
+  aiProvider: process.env.AI_PROVIDER ?? '',
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
+  aiModel: process.env.AI_MODEL ?? 'claude-haiku-5-5',
+  aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 10000),
+  aiMaxCallsPerDay: Number(process.env.AI_MAX_CALLS_PER_DAY ?? 100),
 };
