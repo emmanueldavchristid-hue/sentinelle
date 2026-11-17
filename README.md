@@ -23,6 +23,8 @@ Au premier démarrage, la base PostgreSQL embarquée (PGlite) est créée dans `
 | `pnpm dev` | Développement : API (port 3000) + Vite (port 5173) |
 | `pnpm user:create --id ID --username IDENTIFIANT --name "Nom" --role AGENT\|VET --org ORG-DEMO` | Crée un compte pour le mode authentifié (mot de passe demandé, 12 caractères minimum) |
 | `pnpm demo:reset` | Réinitialise les données de démonstration (destructif, mode démo uniquement). Option : `pnpm demo:reset --avec-signalement` |
+| `pnpm db:backup` / `pnpm db:restore fichier` | Sauvegarde / restauration de la base embarquée (serveur arrêté) |
+| `pnpm user:list` / `user:disable` / `user:enable` | Gestion des comptes du mode authentifié |
 | `pnpm test` | Tests unitaires et d’intégration (moteur, API, file locale) |
 | `pnpm typecheck` | Vérification des types |
 | `pnpm e2e` | Parcours navigateur (Playwright). Nécessite Chrome installé (`PW_CHANNEL=chrome`) ou `npx playwright install chromium` |
@@ -38,7 +40,7 @@ Cette voie n’a **pas** été exécutée dans l’environnement de développeme
 ## Fonctionnalités
 
 - **Terrain (agent)** : recherche manuelle ou QR code (raccourci, sans valeur de preuve), fiche animale consultable hors connexion, déclaration avec brouillon persistant, file d’envoi explicite et sans doublon, correction des présences et des mouvements demandée par l’enquêteur.
-- **Enquête (vétérinaire)** : examen humain du signalement, analyse déterministe (parcours enregistré / liens potentiels / conclusions impossibles), preuves et calcul de chaque résultat, informations à vérifier, versions d’analyse et comparaison expliquée, paramètres modifiables, historique du dossier, impression.
+- **Enquête (vétérinaire)** : examen humain du signalement, analyse déterministe (parcours enregistré / liens potentiels / conclusions impossibles), synthèse citant ses preuves, explication et calcul de chaque résultat, informations à vérifier, versions d’analyse et comparaison expliquée, paramètres modifiables, historique du dossier, rapport imprimable / PDF.
 - **Import CSV** avec prévisualisation, erreurs ligne par ligne et import tout-ou-rien.
 - **Aide IA facultative** à la structuration d’une observation : désactivée par défaut, proposition à confirmer.
 
@@ -56,8 +58,8 @@ $env:DEMO_MODE="false"; pnpm user:create --id U-VET-1 --username dr.exemple --na
 $env:DEMO_MODE="false"; pnpm demo
 ```
 
-## Aide IA (facultative)
-Sans configuration, l’aide est désactivée et la saisie manuelle est complète. Pour l’activer, définir côté serveur `AI_PROVIDER=anthropic` et `ANTHROPIC_API_KEY` (clé personnelle, facturée par le fournisseur — à ne jamais versionner). Le texte saisi est traité comme une donnée non fiable, la réponse est validée par un schéma strict et rien n’est enregistré sans confirmation. L’appel réel n’a **pas** été testé dans ce projet (aucune clé).
+## IA (facultative)
+Désactivée par défaut : tout fonctionne sans elle. Activable côté serveur avec un modèle **local gratuit** (Ollama, LM Studio) ou un service en ligne (Anthropic, OpenAI…). Deux usages : aide à la saisie d’une observation et reformulation de la synthèse d’enquête, toujours vérifiée contre les preuves. Le moteur d’analyse n’utilise jamais l’IA. Configuration : [docs/GUIDE.md § 5](docs/GUIDE.md).
 
 ## Architecture
 
@@ -70,6 +72,7 @@ docs/               produit, domaine, décisions, état, démo, design, tests, m
 ```
 
 ## Documentation
+- [docs/GUIDE.md](docs/GUIDE.md) — **guide complet** (utilisation, IA, import, administration, dépannage)
 - [docs/DEMO.md](docs/DEMO.md) — script de démonstration, préparation, secours, limites
 - [docs/DOMAIN.md](docs/DOMAIN.md) — règles temporelles, statuts, scénario de référence
 - [docs/PRODUCT.md](docs/PRODUCT.md) — périmètre, utilisateurs, exclusions

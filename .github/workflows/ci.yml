@@ -24,9 +24,9 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U sentinelle" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -43,7 +43,7 @@ jobs:
         run: pnpm --filter @sentinelle/web exec playwright install --with-deps chromium
       - name: Tests de bout en bout
         run: pnpm e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: failure()
         with:
           name: playwright-traces
@@ -54,13 +54,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Construction de l'image
         run: docker build -t sentinelle:ci .
       - name: Démarrage et contrôle de santé
         run: |
-          docker run -d --name s -p 3000:3000 sentinelle:ci
+          docker run -d --name sentinelle-ci -p 3000:3000 sentinelle:ci
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:3000/api/health && break; sleep 2; done
           curl -sf http://127.0.0.1:3000/api/health | grep '"ok":true'
           curl -sf -o /dev/null http://127.0.0.1:3000/
-          docker logs s
+          docker logs sentinelle-ci

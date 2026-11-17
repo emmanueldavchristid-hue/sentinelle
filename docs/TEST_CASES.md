@@ -6,6 +6,9 @@ Statut au 15/11 (environnement Claude, Linux) — voir docs/STATUS.md pour les c
 - **SEC-01→04** : intégration API (`apps/api/test/api.test.ts`), dont isolation entre organisations.
 - **UI** : UI-01 partiel (choix de rôle et recherche au clavier), UI-02 (360 px), UI-03 (1920 px), UI-04/05/06/07/08 vérifiés en E2E (`apps/web/e2e/`) ou visuellement. Lecteur d'écran : **non testé**.
 - **Hors connexion réel** : coupure réseau par le navigateur (`context.setOffline`) avec service worker, rechargement de la fiche, saisie, transmission au retour du réseau — E2E vert.
+- **Synthèse et IA multi-fournisseurs** : synthèse déterministe (domaine), validation des reformulations, format exact des requêtes Anthropic et compatibles OpenAI vérifié contre de faux serveurs HTTP, reformulation fidèle acceptée et conservée, reformulation inventive rejetée — `packages/domain/test/summary.test.ts`, `apps/api/test/ia.test.ts`.
+- **Revue indépendante** : idempotence limitée, réinitialisation protégée, bornes du moteur, erreurs 400 — tests ajoutés (api, domaine) ; déconnexion protégée — E2E.
+- **PostgreSQL serveur** : toute la suite d'API exécutée contre un vrai PostgreSQL 16 (`test:pg`), en local et en CI.
 - **IA** : absence de clé, timeout, sortie invalide, instruction dans le texte, valeurs hors périmètre, plafond, aucun enregistrement automatique — intégration API avec faux fournisseurs. **Appel réel non exécuté** (aucune clé).
 - **Authentification (mode non démo)** : hachage, cookie httpOnly/SameSite, déconnexion, verrouillage, origine refusée, en-têtes — intégration API + E2E `auth`.
 - **Import CSV** : analyse, erreurs par ligne, tout-ou-rien, idempotence, fichier modifié — intégration API + E2E.
