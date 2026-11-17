@@ -28,9 +28,11 @@ import {
 import type { Db, Queryable } from './db.js';
 import { resetAndSeed } from './seed.js';
 import { HttpError, parse, sha256, type User } from './http.js';
+import { findReplay, lock, requestHash, saveReplay } from './idempotency.js';
 import { type AuthConfig, registerAuth, sessionUser } from './auth.js';
 import { registerImport } from './import.js';
-import { type StructuringProvider, registerAssist } from './assist.js';
+import { type StructuringProvider, type SummaryProvider, registerAssist, structuringFromLlm, summaryFromLlm } from './assist.js';
+import type { LlmClient } from './llm.js';
 
 export interface AppOptions {
   db: Db;
@@ -38,7 +40,11 @@ export interface AppOptions {
   webDist?: string;
   logger?: boolean;
   auth?: Partial<AuthConfig>;
+  /** Client LLM configuré côté serveur (null = IA désactivée). */
+  llm?: LlmClient | null;
+  /** Surcharges pour les tests. */
   structuringProvider?: StructuringProvider | null;
+  summaryProvider?: SummaryProvider | null;
   aiLimits?: { timeoutMs?: number; maxCallsPerDay?: number };
 }
 
@@ -144,6 +150,7 @@ export async function buildApp(opts: AppOptions) {
   const json = <T>(v: unknown): T => (typeof v === 'string' ? JSON.parse(v) : v) as T;
 
   async function runAnalysis(q: Queryable, u: User, investigationId: string, params: AnalysisParams) {
+    await lock(q, `investigation:${investigationId}`);
     const snapshot = await buildSnapshot(q, u.org_id);
     const output = analyze(snapshot, params);
     const snapshotHash = sha256(stableStringify(snapshot));
@@ -192,7 +199,15 @@ export async function buildApp(opts: AppOptions) {
   const ctx = { app, db, demoMode: opts.demoMode, currentUser, requireRole, audit: (q: Queryable, u: User | null, a: string, e: string, id: string, d?: unknown) => audit(q, u, a, e, id, d) };
   registerAuth(ctx, opts.auth);
   registerImport(ctx);
-  const assist = registerAssist(ctx, opts.structuringProvider ?? null, opts.aiLimits);
+  const llm = opts.llm ?? null;
+  const assist = registerAssist(
+    { ...ctx, getInvestigation },
+    {
+      structuring: opts.structuringProvider !== undefined ? opts.structuringProvider : llm ? structuringFromLlm(llm) : null,
+      summary: opts.summaryProvider !== undefined ? opts.summaryProvider : llm ? summaryFromLlm(llm) : null,
+    },
+    opts.aiLimits,
+  );
 
   app.get('/api/health', async () => ({
     ok: true,
@@ -211,6 +226,18 @@ export async function buildApp(opts: AppOptions) {
 
   app.post('/api/demo/reset', async (req) => {
     if (!opts.demoMode) throw new HttpError(403, 'FORBIDDEN', 'Réinitialisation désactivée hors mode démonstration');
+    // En-tête personnalisé obligatoire : une page d'un autre site ne peut pas l'envoyer sans autorisation CORS (protection CSRF).
+    if (req.headers['x-sentinelle-demo'] !== 'reset') throw new HttpError(403, 'FORBIDDEN', 'Réinitialisation refusée : en-tête de confirmation manquant');
+    const origin = req.headers.origin;
+    if (origin) {
+      let host: string | null = null;
+      try {
+        host = new URL(origin).host;
+      } catch {
+        host = null;
+      }
+      if (host !== req.headers.host) throw new HttpError(403, 'FORBIDDEN', 'Origine refusée');
+    }
     const body = (req.body ?? {}) as { withObservation?: unknown };
     await resetAndSeed(db, { withObservation: body.withObservation === true });
     return { ok: true };
@@ -244,7 +271,7 @@ export async function buildApp(opts: AppOptions) {
 
   app.get('/api/animals', async (req) => {
     const u = await currentUser(req);
-    const qs = z.object({ q: z.string().max(40).optional() }).parse(req.query ?? {});
+    const qs = parse(z.object({ q: z.string().max(40).optional() }), req.query ?? {});
     const term = `%${(qs.q ?? '').trim().toUpperCase()}%`;
     const animals = (await db.query<{ id: string; tag: string; species: string }>('SELECT id, tag, species FROM animals WHERE org_id = $1 AND UPPER(tag) LIKE $2 ORDER BY tag LIMIT 50', [u.org_id, term])).rows;
     const recs = await currentRecords(db, u.org_id);
@@ -286,7 +313,7 @@ export async function buildApp(opts: AppOptions) {
     });
     if (inserted) return reply.status(201).send({ duplicate: false, observation: observationDto(inserted) });
     // Rejeu (réponse perdue, double envoi) : on renvoie l'enregistrement existant, sans doublon.
-    const existing = (await db.query('SELECT * FROM observations WHERE idempotency_key = $1 AND org_id = $2', [body.idempotencyKey, u.org_id])).rows[0];
+    const existing = (await db.query('SELECT * FROM observations WHERE idempotency_key = $1 AND org_id = $2 AND author_id = $3 AND id = $4', [body.idempotencyKey, u.org_id, u.id, body.clientId])).rows[0];
     if (!existing) throw new HttpError(409, 'CONFLICT', 'Identifiant client déjà utilisé par une autre opération');
     return reply.status(200).send({ duplicate: true, observation: observationDto(existing) });
   });
@@ -320,6 +347,7 @@ export async function buildApp(opts: AppOptions) {
     requireRole(u, 'VET');
     const body = parse(CreateInvestigationSchema, req.body);
     const result = await db.tx(async (q) => {
+      await lock(q, `observation:${body.observationId}`);
       const obs = (await q.query<{ id: string; animal_id: string; status: string }>('SELECT id, animal_id, status FROM observations WHERE id = $1 AND org_id = $2', [body.observationId, u.org_id])).rows[0];
       if (!obs) throw new HttpError(404, 'NOT_FOUND', 'Signalement introuvable');
       const existing = (await q.query<{ id: string }>('SELECT id FROM investigations WHERE observation_id = $1', [obs.id])).rows[0];
@@ -405,7 +433,7 @@ export async function buildApp(opts: AppOptions) {
     const u = await currentUser(req);
     requireRole(u, 'VET');
     const inv = await getInvestigation(db, u, (req.params as { id: string }).id);
-    const qs = z.object({ a: z.coerce.number().int().min(1), b: z.coerce.number().int().min(1) }).parse(req.query);
+    const qs = parse(z.object({ a: z.coerce.number().int().min(1), b: z.coerce.number().int().min(1) }), req.query ?? {});
     const load = async (seq: number) => {
       const r = (await db.query<{ snapshot: unknown; output: unknown }>('SELECT snapshot, output FROM analysis_runs WHERE investigation_id = $1 AND seq = $2', [inv.id, seq])).rows[0];
       if (!r) throw new HttpError(404, 'NOT_FOUND', `Analyse n° ${seq} introuvable`);
@@ -447,8 +475,9 @@ export async function buildApp(opts: AppOptions) {
     requireRole(u, 'AGENT');
     const recordId = (req.params as { id: string }).id;
     const body = parse(RecordCorrectionSchema, req.body);
-    const replay = (await db.query<{ response: unknown }>('SELECT response FROM idempotent_ops WHERE key = $1', [body.idempotencyKey])).rows[0];
-    if (replay) return reply.status(200).send({ ...json<object>(replay.response), duplicate: true });
+    const hash = requestHash(body as Record<string, unknown>);
+    const replay = await findReplay(db, body.idempotencyKey, u, 'record_revision', recordId, hash);
+    if (replay) return reply.status(200).send({ ...replay, duplicate: true });
 
     if (body.kind === 'presence') {
       const b = presenceBounds(body.start, body.end);
@@ -458,6 +487,9 @@ export async function buildApp(opts: AppOptions) {
     }
 
     const response = await db.tx(async (q) => {
+      await lock(q, `record:${u.org_id}:${recordId}`);
+      const again = await findReplay(q, body.idempotencyKey, u, 'record_revision', recordId, hash);
+      if (again) return { ...(again as { recordId: string; rev: number; previousRev: number }), replayed: true };
       const cur = (
         await q.query<{ rev: number; kind: string; data: unknown }>('SELECT rev, kind, data FROM record_revisions WHERE record_id = $1 AND org_id = $2 ORDER BY rev DESC LIMIT 1', [recordId, u.org_id])
       ).rows[0];
@@ -476,10 +508,14 @@ export async function buildApp(opts: AppOptions) {
       await q.query('INSERT INTO record_revisions(record_id, rev, org_id, kind, data, author_id, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)', [recordId, rev, u.org_id, body.kind, JSON.stringify(data), u.id, body.reason]);
       await q.query(`UPDATE verification_tasks SET status = 'DONE', done_at = now(), done_rev = $1 WHERE record_id = $2 AND org_id = $3 AND status <> 'DONE'`, [rev, recordId, u.org_id]);
       const res = { recordId, rev, previousRev: cur.rev };
-      await q.query('INSERT INTO idempotent_ops(key, op, response) VALUES ($1,$2,$3)', [body.idempotencyKey, 'record_revision', JSON.stringify(res)]);
+      await saveReplay(q, body.idempotencyKey, u, 'record_revision', recordId, hash, res);
       await audit(q, u, 'RECORD_REVISED', 'record', recordId, { rev, reason: body.reason });
       return res;
     });
+    if ('replayed' in response) {
+      const { replayed: _r, ...rest } = response;
+      return reply.status(200).send({ ...rest, duplicate: true });
+    }
     return reply.status(201).send({ ...response, duplicate: false });
   });
 

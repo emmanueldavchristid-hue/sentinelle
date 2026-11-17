@@ -12,7 +12,8 @@ export interface Health {
 interface Ctx {
   session: Session | null;
   login: (s: Session) => void;
-  logout: () => Promise<void>;
+  /** auto = session expirée : les déclarations non transmises sont conservées sur l'appareil. */
+  logout: (opts?: { auto?: boolean }) => Promise<boolean>;
   db: LocalDb | null;
   connection: Connection;
   health: Health | null;
@@ -107,21 +108,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSession(s);
   }, []);
 
-  /** Déconnexion : fin de session serveur (mode authentifié) et purge des données locales de cet utilisateur. */
-  const logout = useCallback(async () => {
-    try {
-      await api('/api/auth/logout', { method: 'POST', body: {} });
-    } catch {
-      /* hors connexion : la purge locale a lieu quand même */
-    }
-    if (db) {
-      db.close();
-      await db.delete();
-    }
-    saveSession(null);
-    setSession(null);
-    go('');
-  }, [db]);
+  /**
+   * Déconnexion. Les données locales de l'utilisateur sont purgées, SAUF s'il reste des déclarations non transmises :
+   * - déconnexion volontaire : confirmation explicite avant suppression ;
+   * - session expirée : la base locale est conservée (elle réapparaît à la reconnexion du même utilisateur).
+   */
+  const logout = useCallback(
+    async (opts: { auto?: boolean } = {}) => {
+      let keepLocal = false;
+      if (db) {
+        const pending = await db.outbox.where('state').anyOf(['PENDING', 'SENDING', 'FAILED']).count();
+        if (pending > 0) {
+          if (opts.auto) keepLocal = true;
+          else if (!window.confirm(`${pending} déclaration(s) non transmise(s) seront supprimées de cet appareil. Transmettez-les d’abord depuis « Déclarations ». Continuer quand même ?`)) return false;
+        }
+      }
+      try {
+        await api('/api/auth/logout', { method: 'POST', body: {} });
+      } catch {
+        /* hors connexion : la déconnexion locale a lieu quand même */
+      }
+      if (db) {
+        db.close();
+        if (!keepLocal) await db.delete();
+      }
+      saveSession(null);
+      setSession(null);
+      go('');
+      return true;
+    },
+    [db],
+  );
 
   // Hors mode démonstration, la simulation de coupure n'a pas de sens : elle est désactivée.
   useEffect(() => {
@@ -132,7 +149,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session) return;
     api('/api/me', { session }).catch((e) => {
-      if (e instanceof ApiFailure && e.status === 401) logout();
+      if (e instanceof ApiFailure && e.status === 401) logout({ auto: true });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);

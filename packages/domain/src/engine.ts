@@ -246,7 +246,8 @@ export function analyze(snapshot: DataSnapshot, params: AnalysisParams): Analysi
   }
   const ok = (id: string) => !anomalies.has(id);
 
-  const touchesWindow = (min: number, max: number) => min < wTo && max >= wFrom;
+  // Intervalles semi-ouverts : une présence qui se termine exactement au début de la fenêtre n'y entre pas.
+  const touchesWindow = (min: number, max: number) => min < wTo && max > wFrom;
 
   // ---------- 2. Niveau A : parcours enregistré de l'animal signalé ----------
   for (const m of movements) {
@@ -325,9 +326,12 @@ export function analyze(snapshot: DataSnapshot, params: AnalysisParams): Analysi
         { recordId: t.presence.id, kind: 'presence', rev: t.presence.rev },
         { recordId: q.id, kind: 'presence', rev: q.rev },
       ];
-      const onwardMoves = movements.filter(
-        (m) => m.animalId === q.animalId && m.fromLocationId === loc && ok(m.id) && bounds(m.departure).max >= qb.startMin,
-      );
+      // Mouvements suivants : départ du lieu partagé, possible après le début de la présence et avant la fin de la fenêtre.
+      const onwardMoves = movements.filter((m) => {
+        if (m.animalId !== q.animalId || m.fromLocationId !== loc || !ok(m.id)) return false;
+        const d = bounds(m.departure);
+        return d.max >= qb.startMin && d.min < wTo;
+      });
       const onward = onwardMoves.map((m) => ({ movementId: m.id, toLocationId: m.toLocationId }));
       const base = {
         key: `B|${t.presence.id}|${q.id}`,
@@ -353,7 +357,8 @@ export function analyze(snapshot: DataSnapshot, params: AnalysisParams): Analysi
           limits: [...qVerif, 'Règle de démonstration à valider.'],
           sortTime: verdict.from,
         });
-        for (const m of onwardMoves) {
+        // Pour un lien établi, seuls les départs possibles après le début du chevauchement sont suivis.
+        for (const m of onwardMoves.filter((mv) => bounds(mv.departure).max >= verdict.from)) {
           if (t.depth + 2 > params.maxDepth) {
             limits.add(`Profondeur maximale (${params.maxDepth}) atteinte : les lieux suivants de ${qa} ne sont pas explorés.`);
             break;
@@ -379,7 +384,13 @@ export function analyze(snapshot: DataSnapshot, params: AnalysisParams): Analysi
             limits: ['Conséquence d’un lien potentiel, lui-même fondé sur une règle à valider.'],
             sortTime: d.min,
           });
-          const next = presences.find((p) => p.animalId === q.animalId && p.locationId === m.toLocationId && ok(p.id) && !tracked.has(p.id));
+          // Présence au lieu d'arrivée compatible avec l'heure d'arrivée (et non la première venue).
+          const arr = bounds(m.arrival);
+          const next = presences
+            .filter((p) => p.animalId === q.animalId && p.locationId === m.toLocationId && ok(p.id) && !tracked.has(p.id))
+            .map((p) => ({ p, b: presenceBounds(p.start, p.end) }))
+            .filter(({ b }) => b.startMin <= arr.max && b.endMax >= arr.min)
+            .sort((x, y) => x.b.startMin - y.b.startMin || cmpStr(x.p.id, y.p.id))[0]?.p;
           if (next) {
             tracked.add(next.id);
             queue.push({

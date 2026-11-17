@@ -10,6 +10,7 @@ import { InvestigationList, Review, Signals } from './pages/vet';
 import { ImportPage } from './pages/import';
 import { QrScan } from './pages/qr';
 import { InvestigationConsole } from './pages/console';
+import { Report } from './pages/report';
 
 interface DemoUser {
   id: string;
@@ -119,7 +120,7 @@ function RolePicker() {
   const reset = async (withObservation: boolean) => {
     if (!window.confirm('Réinitialiser toutes les données de démonstration ? Cette action efface les enquêtes et corrections.')) return;
     try {
-      await api('/api/demo/reset', { method: 'POST', body: { withObservation } });
+      await api('/api/demo/reset', { method: 'POST', body: { withObservation }, headers: { 'x-sentinelle-demo': 'reset' } });
       setResetMsg(withObservation ? 'Données réinitialisées, avec le signalement B-017 déjà reçu.' : 'Données réinitialisées (scénario B-017, sans signalement).');
     } catch (e) {
       setResetMsg(errorMessage(e));
@@ -189,7 +190,7 @@ function RolePicker() {
 
 function Router() {
   const { session } = useApp();
-  const [page, arg] = useRoute();
+  const [page, arg, arg2] = useRoute();
   if (!session) return <Home />;
   if (session.role === 'AGENT') {
     switch (page) {
@@ -212,6 +213,8 @@ function Router() {
   switch (page) {
     case 'signalement':
       return <Shell current="signalements" header={<span className="font-semibold">Examen</span>}>{arg ? <Review id={arg} /> : null}</Shell>;
+    case 'rapport':
+      return <Shell current="enquetes" header={<span className="font-semibold">Rapport d’enquête</span>}>{arg ? <Report id={arg} seq={Number(arg2) || 1} /> : null}</Shell>;
     case 'import':
       return <Shell current="import" header={<span className="font-semibold">Import de données</span>}><ImportPage /></Shell>;
     case 'enquetes':

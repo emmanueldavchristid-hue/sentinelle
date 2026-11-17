@@ -1,10 +1,11 @@
+import { openTestDb } from './helpers.js';
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { REFERENCE_CORRECTION, REFERENCE_OBSERVATION, REFERENCE_PARAMS } from '@sentinelle/domain';
 import { buildApp } from '../src/app.js';
-import { type Db, migrate, openDb } from '../src/db.js';
+import { type Db, migrate } from '../src/db.js';
 import { resetAndSeed } from '../src/seed.js';
 
 let db: Db;
@@ -26,7 +27,7 @@ const obsPayload = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeAll(async () => {
-  db = await openDb({ dataDir: 'memory' });
+  db = await openTestDb();
   await migrate(db);
   await resetAndSeed(db);
   app = await buildApp({ db, demoMode: true });
@@ -225,9 +226,38 @@ describe('Sécurité (démonstration locale)', () => {
   });
 });
 
+describe('Constats de la revue indépendante', () => {
+  it('clé d’idempotence réutilisée avec un autre contenu : 409, aucune fausse réussite', async () => {
+    const key = randomUUID();
+    const base = { idempotencyKey: key, baseRev: 2, start: { precision: 'INSTANT', at: '2026-03-01T10:00:00Z' }, end: { precision: 'INSTANT', at: '2026-03-01T11:00:00Z' }, reason: 'première' };
+    const cur = (await db.query<{ rev: number }>("SELECT MAX(rev)::int AS rev FROM record_revisions WHERE record_id = 'P5'")).rows[0]!.rev;
+    const first = await app.inject({ method: 'POST', url: '/api/records/P5/revisions', headers: AGENT, payload: { ...base, baseRev: cur } });
+    expect(first.statusCode).toBe(201);
+    const other = await app.inject({ method: 'POST', url: '/api/records/P5/revisions', headers: AGENT, payload: { ...base, baseRev: cur, reason: 'contenu différent' } });
+    expect(other.statusCode).toBe(409);
+    expect(other.json().error).toBe('IDEMPOTENCY_CONFLICT');
+    const elsewhere = await app.inject({ method: 'POST', url: '/api/records/P4/revisions', headers: AGENT, payload: { ...base, baseRev: cur } });
+    expect(elsewhere.statusCode).toBe(409);
+  });
+
+  it('paramètres de requête invalides : 400 explicite, pas 500', async () => {
+    expect((await app.inject({ url: `/api/animals?q=${'x'.repeat(50)}`, headers: VET })).statusCode).toBe(400);
+    const invs = (await app.inject({ url: '/api/investigations', headers: VET })).json();
+    expect((await app.inject({ url: `/api/investigations/${invs[0].id}/compare`, headers: VET })).statusCode).toBe(400);
+  });
+
+  it('rejeu d’une observation par un autre utilisateur : refusé', async () => {
+    const p = obsPayload();
+    expect((await app.inject({ method: 'POST', url: '/api/sync/observations', headers: AGENT, payload: p })).statusCode).toBe(201);
+    expect((await app.inject({ method: 'POST', url: '/api/sync/observations', headers: VET, payload: p })).statusCode).toBe(409);
+  });
+});
+
 describe('Réinitialisation de démonstration', () => {
   it('remet le jeu B-017 à l’état initial, éventuellement avec le signalement', async () => {
-    const r = await app.inject({ method: 'POST', url: '/api/demo/reset', payload: { withObservation: true } });
+    expect((await app.inject({ method: 'POST', url: '/api/demo/reset', payload: { withObservation: true } })).statusCode).toBe(403); // en-tête manquant
+    expect((await app.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset', origin: 'https://evil.example', host: 'localhost' }, payload: {} })).statusCode).toBe(403);
+    const r = await app.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset' }, payload: { withObservation: true } });
     expect(r.statusCode).toBe(200);
     expect((await app.inject({ url: '/api/observations', headers: VET })).json()).toHaveLength(1);
     const p6 = (await db.query<{ n: number }>("SELECT COUNT(*)::int AS n FROM record_revisions WHERE record_id = 'P6'")).rows[0]!.n;

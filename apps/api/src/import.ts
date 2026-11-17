@@ -5,6 +5,7 @@ import { bounds, presenceBounds, type TemporalValue } from '@sentinelle/domain';
 import { RecordDataSchema } from '@sentinelle/contracts';
 import type { Db, Queryable } from './db.js';
 import { HttpError, parse, sha256, type User } from './http.js';
+import { findReplay, lock, requestHash, saveReplay } from './idempotency.js';
 
 /**
  * Import CSV de présences et de mouvements, avec prévisualisation.
@@ -212,9 +213,13 @@ export function registerImport(ctx: Ctx) {
     const u = await ctx.currentUser(req);
     ctx.requireRole(u, 'VET');
     const body = parse(CommitSchema, req.body);
-    const replay = (await ctx.db.query<{ response: unknown }>('SELECT response FROM idempotent_ops WHERE key = $1', [body.idempotencyKey])).rows[0];
-    if (replay) return reply.status(200).send({ ...(typeof replay.response === 'string' ? JSON.parse(replay.response) : (replay.response as object)), duplicate: true });
+    const hash = requestHash(body);
+    const replay = await findReplay(ctx.db, body.idempotencyKey, u, 'import_commit', u.org_id, hash);
+    if (replay) return reply.status(200).send({ ...replay, duplicate: true });
     const res = await ctx.db.tx(async (q) => {
+      await lock(q, `import:${u.org_id}`);
+      const again = await findReplay(q, body.idempotencyKey, u, 'import_commit', u.org_id, hash);
+      if (again) return { ...again, replayed: true };
       const preview = await previewCsv(q, u.org_id, body.csv);
       if (preview.fileHash !== body.fileHash) throw new HttpError(409, 'CONFLICT', 'Le fichier a changé depuis la prévisualisation : prévisualisez à nouveau');
       if (!preview.canCommit) throw new HttpError(400, 'VALIDATION', `${preview.counts.error} ligne(s) en erreur : rien n’a été importé`);
@@ -236,10 +241,14 @@ export function registerImport(ctx: Ctx) {
         ]);
       }
       const response = { batchId, imported: preview.rows.length, animalsCreated: [...created], warnings: preview.counts.warning };
-      await q.query('INSERT INTO idempotent_ops(key, op, response) VALUES ($1,$2,$3)', [body.idempotencyKey, 'import_commit', JSON.stringify(response)]);
+      await saveReplay(q, body.idempotencyKey, u, 'import_commit', u.org_id, hash, response);
       await ctx.audit(q, u, 'IMPORT_COMMITTED', 'import', batchId, { rows: preview.rows.length, fileHash: preview.fileHash });
       return response;
     });
+    if ('replayed' in res) {
+      const { replayed: _r, ...rest } = res as Record<string, unknown>;
+      return reply.status(200).send({ ...rest, duplicate: true });
+    }
     return reply.status(201).send({ ...res, duplicate: false });
   });
 }

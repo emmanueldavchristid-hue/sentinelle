@@ -46,7 +46,7 @@ export function Shell({ current, children, header }: { current: string; children
       <div className="bg-ink px-3 py-1 text-center text-xs text-white" role="note">
         {demo ? 'Démonstrateur — données entièrement synthétiques — mode démonstration (pas d’authentification sécurisée)' : 'Prototype — données de démonstration synthétiques — session authentifiée'}
       </div>
-      <div className="md:grid md:grid-cols-[200px_1fr]">
+      <div className="md:grid md:grid-cols-[200px_1fr] print:block">
         <nav aria-label="Navigation principale" className="no-print hidden border-r border-line bg-surface p-3 md:block">
           <div className="mb-4 flex items-center gap-2 px-2">
             <img src="/icon.svg" alt="" width={32} height={32} />

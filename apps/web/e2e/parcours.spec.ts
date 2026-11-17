@@ -5,7 +5,7 @@ async function chooseRole(page: Page, name: RegExp) {
   await page.getByRole('button', { name }).click();
 }
 async function resetDemo(page: Page) {
-  const r = await page.request.post('/api/demo/reset', { data: { withObservation: false } });
+  const r = await page.request.post('/api/demo/reset', { headers: { 'x-sentinelle-demo': 'reset' }, data: { withObservation: false } });
   expect(r.ok()).toBeTruthy();
 }
 async function noHorizontalOverflow(page: Page) {
@@ -75,7 +75,7 @@ test('parcours principal : fiche → observation hors connexion → réouverture
   await expect(page2.getByRole('heading', { name: /Enquête · signalement sur B-017/ })).toBeVisible();
   const results = page2.getByRole('region', { name: 'Résultats' });
   for (const t of ['Élevage A → Marché M', 'Marché M → Élevage C', 'B-031 à Marché M', 'B-052 à Marché M', 'B-044 à Marché M']) await expect(page2.getByRole('button', { name: new RegExp(t) }).first()).toBeVisible();
-  await expect(page2.getByText(/Élevage E.*proximité géographique n’est pas évaluée/)).toBeVisible();
+  await expect(results.getByText(/Élevage E.*proximité géographique n’est pas évaluée/)).toBeVisible();
 
   // 8. Information manquante : B-052, sélectionnée par défaut
   const why = page2.getByRole('region', { name: 'Pourquoi ce résultat ?' });

@@ -17,6 +17,7 @@ const TABLES = [
   'audit_events',
   'idempotent_ops',
   'verification_tasks',
+  'analysis_summaries',
   'analysis_runs',
   'investigations',
   'observations',

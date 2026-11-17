@@ -14,6 +14,11 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "e2e": "pnpm --filter @sentinelle/web e2e",
-    "user:create": "pnpm --filter @sentinelle/api user:create"
+    "user:create": "pnpm --filter @sentinelle/api user:create",
+    "db:backup": "pnpm --filter @sentinelle/api db:backup",
+    "db:restore": "pnpm --filter @sentinelle/api db:restore",
+    "user:list": "pnpm --filter @sentinelle/api user:list",
+    "user:disable": "pnpm --filter @sentinelle/api user:disable",
+    "user:enable": "pnpm --filter @sentinelle/api user:enable"
   }
 }

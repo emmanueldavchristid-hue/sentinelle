@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sentinelle
+          POSTGRES_PASSWORD: sentinelle-ci
+          POSTGRES_DB: sentinelle_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sentinelle" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typage
+        run: pnpm typecheck
+      - name: Tests unitaires et d'intégration (PGlite)
+        run: pnpm test
+      - name: Tests d'intégration sur PostgreSQL serveur
+        run: pnpm --filter @sentinelle/api test:pg
+        env:
+          TEST_DATABASE_URL: postgres://sentinelle:sentinelle-ci@localhost:5432/sentinelle_test
+      - name: Navigateur Playwright
+        run: pnpm --filter @sentinelle/web exec playwright install --with-deps chromium
+      - name: Tests de bout en bout
+        run: pnpm e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: apps/web/test-results
+          retention-days: 7
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construction de l'image
+        run: docker build -t sentinelle:ci .
+      - name: Démarrage et contrôle de santé
+        run: |
+          docker run -d --name s -p 3000:3000 sentinelle:ci
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:3000/api/health && break; sleep 2; done
+          curl -sf http://127.0.0.1:3000/api/health | grep '"ok":true'
+          curl -sf -o /dev/null http://127.0.0.1:3000/
+          docker logs s

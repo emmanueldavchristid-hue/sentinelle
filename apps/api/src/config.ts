@@ -13,8 +13,9 @@ export const config = {
   webDist: process.env.WEB_DIST ?? resolve(root, 'apps/web/dist'),
   secureCookie: process.env.COOKIE_SECURE === 'true',
   aiProvider: process.env.AI_PROVIDER ?? '',
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
-  aiModel: process.env.AI_MODEL ?? 'claude-haiku-5-5',
-  aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 10000),
+  aiApiKey: process.env.AI_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+  aiBaseUrl: process.env.AI_BASE_URL ?? '',
+  aiModel: process.env.AI_MODEL ?? '',
+  aiTimeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 15000),
   aiMaxCallsPerDay: Number(process.env.AI_MAX_CALLS_PER_DAY ?? 100),
 };

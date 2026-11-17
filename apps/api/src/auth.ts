@@ -77,6 +77,7 @@ export function registerAuth(ctx: Ctx, cfg: Partial<AuthConfig> = {}) {
   ctx.app.post('/api/auth/login', async (req, reply) => {
     const body = parse(LoginSchema, req.body);
     const key = `${body.username.toLowerCase()}|${req.ip}`;
+    if (failures.size > 500) for (const [k, v] of failures) if (v.until < Date.now()) failures.delete(k); // purge des entrées expirées
     const f = failures.get(key);
     if (f && f.count >= conf.maxFailures && f.until > Date.now()) {
       throw new HttpError(429, 'TOO_MANY_ATTEMPTS', `Trop de tentatives. Réessayez dans ${conf.lockMinutes} minutes.`);

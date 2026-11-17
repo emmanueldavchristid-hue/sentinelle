@@ -11,7 +11,7 @@ import {
   STATUS_LABELS,
 } from '@sentinelle/domain';
 import { TASK_STATUS_LABELS } from '@sentinelle/contracts';
-import { api, errorMessage } from '../api';
+import { api, ApiFailure, errorMessage } from '../api';
 import { useApp, useResource } from '../state';
 import { Banner, ErrorView, Loading, STATUS_STYLE, StatusBadge } from '../components/ui';
 import type { LocationDto } from './agent';
@@ -25,14 +25,14 @@ interface RunSummary {
   params: AnalysisOutput['params'];
   counts: Record<string, number>;
 }
-interface InvestigationDto {
+export interface InvestigationDto {
   investigation: { id: string; status: string; createdAt: string };
   observation: ObservationDto;
   runs: RunSummary[];
   tasks: { id: string; recordId: string; kind: string; label: string; status: keyof typeof TASK_STATUS_LABELS; doneRev: number | null }[];
   locations: LocationDto[];
 }
-interface RunDto {
+export interface RunDto {
   seq: number;
   engineVersion: string;
   snapshotHash: string;
@@ -43,7 +43,7 @@ interface RunDto {
 }
 type CompareDto = AnalysisDiff & { a: number; b: number };
 
-const VERIF = { DECLARED: 'déclaré, non vérifié', VERIFIED: 'vérifié', TO_VERIFY: 'à vérifier' } as const;
+export const VERIF = { DECLARED: 'déclaré, non vérifié', VERIFIED: 'vérifié', TO_VERIFY: 'à vérifier' } as const;
 
 // ---------------- Schéma SVG (sans carte externe) ----------------
 
@@ -217,7 +217,7 @@ function Schema({
 
 // ---------------- Liste des résultats ----------------
 
-const GROUPS: { level: AnalysisResult['level']; title: string }[] = [
+export const GROUPS: { level: AnalysisResult['level']; title: string }[] = [
   { level: 'A', title: 'Parcours enregistré de l’animal signalé' },
   { level: 'B', title: 'Liens potentiels selon la règle R-B1 (à valider)' },
   { level: 'C', title: 'Ce que les données ne permettent pas de conclure' },
@@ -384,6 +384,86 @@ function ComparePanel({ cmp, onSelect, onClose }: { cmp: CompareDto; onSelect: (
   );
 }
 
+// ---------------- Synthèse ----------------
+
+interface SummaryDto {
+  deterministic: { id: string; title: string; text: string; evidence: string[] }[];
+  ai: { provider: string; createdAt: string; paragraphs: { title: string; text: string; evidence: string[] }[] } | null;
+  aiEnabled: boolean;
+}
+
+export function SummaryPanel({ id, seq, printable = false }: { id: string; seq: number; printable?: boolean }) {
+  const { session } = useApp();
+  const s = useResource<SummaryDto>(`/api/investigations/${id}/runs/${seq}/summary`);
+  const [view, setView] = useState<'det' | 'ai'>('det');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const rewrite = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/api/investigations/${id}/runs/${seq}/summary/ai`, { method: 'POST', session, timeoutMs: 30000 });
+      await s.reload();
+      setView('ai');
+    } catch (e) {
+      const reasons = e instanceof ApiFailure && Array.isArray(e.body.reasons) ? ` (${(e.body.reasons as string[]).join(' ; ')})` : '';
+      setErr(`${errorMessage(e)}${reasons}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (s.error) return <ErrorView error={s.error} onRetry={s.reload} />;
+  if (!s.data) return <Loading label="Préparation de la synthèse…" />;
+  const showAi = view === 'ai' && s.data.ai && !printable;
+  const paras = showAi ? s.data.ai!.paragraphs : s.data.deterministic;
+  return (
+    <section className="card" aria-labelledby={`sum-h-${seq}`}>
+      <div className="card-h flex-wrap">
+        <h2 id={`sum-h-${seq}`} className="flex-1">
+          Synthèse de l’analyse n° {seq}
+        </h2>
+        {!printable && s.data.ai && (
+          <div className="flex gap-1" role="group" aria-label="Version de la synthèse">
+            <button className={`btn btn-sm ${view === 'det' ? 'btn-primary' : ''}`} aria-pressed={view === 'det'} onClick={() => setView('det')}>
+              Déterministe
+            </button>
+            <button className={`btn btn-sm ${view === 'ai' ? 'btn-primary' : ''}`} aria-pressed={view === 'ai'} onClick={() => setView('ai')}>
+              Reformulée (IA)
+            </button>
+          </div>
+        )}
+        {!printable && s.data.aiEnabled && (
+          <button className="btn btn-sm no-print" onClick={rewrite} disabled={busy}>
+            {busy ? 'Reformulation…' : s.data.ai ? 'Reformuler à nouveau' : 'Reformuler avec l’IA'}
+          </button>
+        )}
+      </div>
+      <div className="space-y-3 p-4">
+        <p className="hint">
+          {showAi
+            ? `Reformulation par ${s.data.ai!.provider}, vérifiée automatiquement contre les identifiants de preuve et le vocabulaire interdit. La synthèse déterministe reste la référence.`
+            : 'Synthèse calculée sans IA à partir des résultats de cette analyse. Chaque paragraphe cite ses preuves.'}
+        </p>
+        {paras.map((p, i) => (
+          <div key={i}>
+            <h3 className="font-semibold">{p.title}</h3>
+            <p>
+              {p.text}{' '}
+              {p.evidence.length > 0 && <span className="num text-xs text-ink-2">[{p.evidence.join(', ')}]</span>}
+            </p>
+          </div>
+        ))}
+        {err && (
+          <div role="alert">
+            <Banner tone="error">{err}</Banner>
+          </div>
+        )}
+        {!printable && !s.data.aiEnabled && <p className="hint">Reformulation IA indisponible : aucun fournisseur configuré sur le serveur.</p>}
+      </div>
+    </section>
+  );
+}
+
 // ---------------- Paramètres d'analyse ----------------
 
 function ParamsEditor({ params, busy, onRun }: { params: AnalysisOutput['params']; busy: boolean; onRun: (p: { window: { from: string; to: string }; maxDepth: number }) => void }) {
@@ -447,10 +527,10 @@ const ACTION_LABELS: Record<string, string> = {
   OBSERVATION_CLOSED: 'Signalement classé',
 };
 
-function History({ id, version }: { id: string; version: number }) {
+export function History({ id, version, open = false }: { id: string; version: number; open?: boolean }) {
   const h = useResource<{ at: string; action: string; entity: string; entityId: string; actor: string | null; detail: Record<string, unknown> }[]>(`/api/investigations/${id}/history`, [version]);
   return (
-    <details className="card">
+    <details className="card" open={open}>
       <summary className="card-h cursor-pointer">Historique du dossier</summary>
       {h.error ? <ErrorView error={h.error} onRetry={h.reload} /> : null}
       {h.data && (
@@ -578,9 +658,11 @@ export function InvestigationConsole({ id }: { id: string }) {
               Comparer les analyses
             </button>
           )}
-          <button className="btn" onClick={() => window.print()}>
-            Imprimer
-          </button>
+          {run && (
+            <a className="btn" href={`#/rapport/${id}/${run.seq}`}>
+              Rapport imprimable
+            </a>
+          )}
           <button className="btn btn-primary" onClick={() => rerun()} disabled={busy || !run}>
             {busy ? 'Calcul…' : 'Relancer l’analyse'}
           </button>
@@ -603,6 +685,8 @@ export function InvestigationConsole({ id }: { id: string }) {
       {run && <ParamsEditor params={run.params} busy={busy} onRun={(p) => rerun(p)} />}
 
       {cmp && <ComparePanel cmp={cmp} onSelect={(k) => (setSeq(cmp.b), select(k))} onClose={() => setCmp(null)} />}
+
+      {run && <SummaryPanel key={run.seq} id={id} seq={run.seq} />}
 
       {runError ? <ErrorView error={runError} /> : null}
       {!run && !runError ? <Loading label="Chargement de l’analyse…" /> : null}

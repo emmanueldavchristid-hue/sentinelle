@@ -168,6 +168,41 @@ describe('Parcours amont / aval, cycles, doublons, plafonds', () => {
   });
 });
 
+describe('Bornes (constats de la revue indépendante)', () => {
+  it('un mouvement suivant postérieur à la fenêtre n’est pas un lieu à vérifier', () => {
+    const s = snap();
+    s.movements.find((m) => m.id === 'MV3')!.departure = { precision: 'INSTANT', at: '2026-06-01T08:00:00Z' };
+    s.movements.find((m) => m.id === 'MV3')!.arrival = { precision: 'INSTANT', at: '2026-06-01T10:00:00Z' };
+    const out = run(s);
+    expect(byKey(out.results, 'B|P2|P4')!.status).toBe('POTENTIAL_LINK');
+    expect(out.results.some((r) => r.key === 'B2|P4|MV3')).toBe(false);
+  });
+
+  it('un départ antérieur au chevauchement n’est pas suivi', () => {
+    const s = snap();
+    s.movements.push({ kind: 'movement', id: 'MV3a', rev: 1, animalId: 'B-031', fromLocationId: 'M', toLocationId: 'E', departure: { precision: 'INSTANT', at: '2026-03-01T09:00:00Z' }, arrival: { precision: 'INSTANT', at: '2026-03-01T09:30:00Z' }, verification: 'DECLARED', source: 'test' });
+    expect(run(s).results.some((r) => r.key === 'B2|P4|MV3a')).toBe(false);
+  });
+
+  it('une présence qui se termine exactement au début de la fenêtre n’y entre pas', () => {
+    const out = run(snap(), { ...REFERENCE_PARAMS, window: { from: '2026-03-01T16:00:00Z', to: '2026-03-13T00:00:00Z' } });
+    expect(out.results.some((r) => r.key.startsWith('B|P2|'))).toBe(false);
+  });
+
+  it('la présence suivie au lieu d’arrivée est celle qui correspond à l’heure d’arrivée', () => {
+    const s = snap();
+    s.animals.push({ id: 'Y-1', tag: 'Y-1' });
+    s.presences.push(
+      { kind: 'presence', id: 'PD-old', rev: 1, animalId: 'B-031', locationId: 'D', start: { precision: 'INSTANT', at: '2026-02-26T00:00:00Z' }, end: { precision: 'INSTANT', at: '2026-02-27T00:00:00Z' }, verification: 'DECLARED', source: 'test' },
+      { kind: 'presence', id: 'PD-new', rev: 1, animalId: 'B-031', locationId: 'D', start: { precision: 'INSTANT', at: '2026-03-01T17:00:00Z' }, end: null, verification: 'DECLARED', source: 'test' },
+      { kind: 'presence', id: 'PY', rev: 1, animalId: 'Y-1', locationId: 'D', start: { precision: 'INSTANT', at: '2026-03-02T08:00:00Z' }, end: { precision: 'INSTANT', at: '2026-03-02T09:00:00Z' }, verification: 'DECLARED', source: 'test' },
+    );
+    const out = analyze(s, { ...REFERENCE_PARAMS, maxDepth: 3 });
+    expect(byKey(out.results, 'B|PD-new|PY')?.status).toBe('POTENTIAL_LINK');
+    expect(out.results.some((r) => r.key.startsWith('B|PD-old|'))).toBe(false);
+  });
+});
+
 describe('Correction, reproductibilité, vocabulaire', () => {
   it('ENG-18 révision 2 de P6 : B-052 devient lien potentiel, D ajouté via B-052, rien d’autre ne change', () => {
     const s1 = snap();

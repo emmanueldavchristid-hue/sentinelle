@@ -60,7 +60,7 @@ export class ApiFailure extends Error {
   }
 }
 
-export async function api<T>(path: string, init: { method?: string; body?: unknown; session?: Session | null; timeoutMs?: number } = {}): Promise<T> {
+export async function api<T>(path: string, init: { method?: string; body?: unknown; session?: Session | null; timeoutMs?: number; headers?: Record<string, string> } = {}): Promise<T> {
   if (simulatedOffline) throw new NetworkError('Réseau coupé (simulation de démonstration)');
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), init.timeoutMs ?? 8000);
@@ -71,6 +71,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
       headers: {
         ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}),
         ...(init.session ? { 'x-demo-user': init.session.userId } : {}),
+        ...(init.headers ?? {}),
       },
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
       signal: ctrl.signal,

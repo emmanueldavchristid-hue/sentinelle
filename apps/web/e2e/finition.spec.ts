@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const reset = async (page: Page, withObservation: boolean) => expect((await page.request.post('/api/demo/reset', { data: { withObservation } })).ok()).toBeTruthy();
+const reset = async (page: Page, withObservation: boolean) => expect((await page.request.post('/api/demo/reset', { headers: { 'x-sentinelle-demo': 'reset' }, data: { withObservation } })).ok()).toBeTruthy();
 async function role(page: Page, name: RegExp) {
   await page.goto('/');
   await page.getByRole('button', { name }).click();
@@ -138,4 +138,40 @@ test('aide IA désactivée sans fournisseur : message clair, saisie manuelle int
   await page.getByText('Aide à la saisie (IA, facultative)').click();
   await expect(page.getByText(/Aide IA désactivée : aucun fournisseur n’est configuré/)).toBeVisible();
   await expect(page.getByLabel('Observation', { exact: true })).toBeEditable();
+});
+
+test('synthèse déterministe dans la console, rapport imprimable complet', async ({ page }) => {
+  await reset(page, true);
+  await role(page, /Vétérinaire enquêteur/);
+  await openInvestigation(page);
+  const sum = page.getByRole('region', { name: /Synthèse de l’analyse n° 1/ });
+  await expect(sum).toContainText('B-017 compte 2 mouvements enregistrés');
+  await expect(sum).toContainText('[MV1, MV2]');
+  await expect(sum).toContainText('Reformulation IA indisponible : aucun fournisseur configuré');
+  await page.getByRole('link', { name: 'Rapport imprimable' }).click();
+  await expect(page.getByRole('heading', { name: /Signalement sur B-017 — analyse n° 1/ })).toBeVisible();
+  for (const t of ['Résultats détaillés', 'Limites de la recherche', 'Vérifications', 'Historique du dossier']) await expect(page.getByText(t, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Analyse calculée/).first()).toBeVisible();
+  await expect(page.getByText('Enquête ouverte').first()).toBeVisible();
+  await page.emulateMedia({ media: 'print' });
+  await expect(page.getByRole('navigation', { name: 'Navigation principale' })).toBeHidden();
+  await expect(page.getByRole('button', { name: /Imprimer/ })).toBeHidden();
+  await page.pdf({ path: 'test-results/rapport.pdf', format: 'A4' });
+  await page.emulateMedia({ media: 'screen' });
+});
+
+test('déconnexion avec une déclaration non transmise : confirmation exigée, rien n’est effacé si refus', async ({ page }) => {
+  await reset(page, false);
+  await role(page, /Agent de terrain/);
+  await page.getByRole('link', { name: /B-017/ }).click();
+  await page.getByRole('button', { name: 'Nouvelle observation' }).click();
+  await page.getByLabel('Lieu').selectOption('C');
+  await page.getByText('Inconnue').click();
+  await page.getByLabel('Observation', { exact: true }).fill('Observation en attente.');
+  await page.getByRole('button', { name: 'Enregistrer sur l’appareil' }).click();
+  let message = '';
+  page.once('dialog', (d) => ((message = d.message()), d.dismiss()));
+  await page.getByRole('button', { name: 'Changer de rôle' }).first().click();
+  await expect.poll(() => message).toMatch(/1 déclaration\(s\) non transmise\(s\)/);
+  await expect(page.getByTestId('outbox-item')).toContainText('À transmettre');
 });

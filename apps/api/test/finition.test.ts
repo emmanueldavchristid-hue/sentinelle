@@ -1,8 +1,9 @@
+import { openTestDb } from './helpers.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { REFERENCE_PARAMS } from '@sentinelle/domain';
 import { buildApp } from '../src/app.js';
-import { type Db, migrate, openDb } from '../src/db.js';
+import { type Db, migrate } from '../src/db.js';
 import { resetAndSeed } from '../src/seed.js';
 import { hashPassword, upsertUser, verifyPassword } from '../src/auth.js';
 import { parseCsv, parseTemporalCell } from '../src/import.js';
@@ -13,7 +14,7 @@ const AGENT = { 'x-demo-user': 'U-AGENT' };
 const VET = { 'x-demo-user': 'U-VET' };
 
 beforeAll(async () => {
-  db = await openDb({ dataDir: 'memory' });
+  db = await openTestDb();
   await migrate(db);
   await resetAndSeed(db, { withObservation: true });
 });

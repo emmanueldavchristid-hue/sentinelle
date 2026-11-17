@@ -8,7 +8,13 @@
     "reset": "tsx src/reset.ts",
     "user:create": "tsx src/user-create.ts",
     "typecheck": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:pg": "vitest run --no-file-parallelism",
+    "db:backup": "tsx src/db-tools.ts backup",
+    "db:restore": "tsx src/db-tools.ts restore",
+    "user:list": "tsx src/users.ts list",
+    "user:disable": "tsx src/users.ts disable",
+    "user:enable": "tsx src/users.ts enable"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.16",
