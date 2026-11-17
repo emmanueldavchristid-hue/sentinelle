@@ -3,7 +3,7 @@
 ## Dernier point de contrôle
 - Date et heure : 2026-11-17 ~06:15 (Africa/Abidjan)
 - Branche : feat/sentinelle-demo
-- Dernier commit pertinent : voir `git log` (« ci: … » après 7f87155)
+- Dernier commit pertinent : 9b9a192 (CI verte) puis ce point de reprise
 
 ## Objectif courant
 - Jalon : application terminée (D-17 à D-20). Fonctions gelées.
@@ -25,7 +25,7 @@ Environnement Claude (Linux, Node 22) :
 - `pnpm e2e` : 13/13 (dont vrai hors ligne, mode authentifié, rapport PDF, déconnexion protégée).
 - Essais réels : `pnpm demo`, migration d'une ancienne base, `demo:reset`, `user:create/list/disable`, `db:backup`, `db:restore`.
 - Rapport PDF relu visuellement.
-GitHub Actions (exécution 44028576691) : job tests vert (typage, tests, PostgreSQL serveur, 13 E2E) ; job Docker : image construite, démarrage en échec à cause du nom de conteneur (corrigé, résultat à relire dans l'exécution suivante).
+GitHub Actions (exécution 44028956562, commit 9b9a192) : **tout vert** — job tests (typage, tests, PostgreSQL serveur, 13 E2E) et job Docker (image construite, démarrée, `/api/health` OK, interface servie).
 **Non exécuté** : tout sous Windows ; appel à un vrai modèle d'IA (aucune clé, aucun Ollama ici) ; scan QR avec caméra ; lecteur d'écran ; deuxième appareil.
 
 ## Blocages et autorisations
