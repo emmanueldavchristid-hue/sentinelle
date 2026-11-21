@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { BEACON_STATUS_LABELS, type Beacon, type BeaconsData, type ToolResult } from '@sentinelle/contracts';
+import { beaconName, BEACON_STATUS_LABELS, type Beacon, type BeaconsData, type ToolResult } from '@sentinelle/contracts';
 import { api, ApiFailure, errorMessage, type Session } from '../api';
 import { fmtState, SourceChip } from './parts';
 
@@ -12,7 +12,7 @@ const GLYPH: Record<Beacon['status'], string> = { INSIDE: '●', OUTSIDE: '▲',
 const TONE: Record<Beacon['status'], string> = { INSIDE: 'text-paturage', OUTSIDE: 'text-danger', UNCERTAIN: 'text-amber', NO_FIX: 'text-amber', NEVER: 'text-encre-2', SILENT: 'text-amber', STOPPED: 'text-encre-2' };
 
 /** Alerte dans l'application quand une balise est hors de sa zone. Aucune notification externe n'est envoyée. */
-export function BeaconAlert({ result, onSource, onAsk }: { result: ToolResult<BeaconsData> | null; onSource: (ref: string) => void; onAsk: () => void }) {
+export function BeaconAlert({ result, detailed, onSource, onAsk }: { result: ToolResult<BeaconsData> | null; detailed: boolean; onSource: (ref: string) => void; onAsk: () => void }) {
   const out = result?.data.beacons.filter((b) => result.data.alerts.includes(b.id)) ?? [];
   if (!out.length) return null;
   return (
@@ -20,7 +20,7 @@ export function BeaconAlert({ result, onSource, onAsk }: { result: ToolResult<Be
       <p className="v-field-flag text-danger">▲ Balise hors de sa zone{result!.data.simulated ? ' · données simulées' : ''}</p>
       {out.map((b) => (
         <p key={b.id} className="mt-1 text-[16.5px]">
-          La balise de démonstration <b className="num">{b.id}</b>
+          La balise{detailed ? ' de démonstration' : ''} <b className="num">{beaconName(b)}</b>
           {b.animalId ? (
             <>
               , associée à <b className="num">{b.animalId}</b>,
@@ -32,12 +32,12 @@ export function BeaconAlert({ result, onSource, onAsk }: { result: ToolResult<Be
               , depuis <span className="num">{fmtState(b.outsideSince).slice(11)}</span>
             </>
           ) : null}
-          . <SourceChip sourceRef={`DEVICE:${b.id}`} onSource={onSource} />
+          . {detailed && <SourceChip sourceRef={`DEVICE:${b.id}`} onSource={onSource} />}
         </p>
       ))}
-      <p className="v-meta mt-1">La balise mesure sa propre distance, pas la position de l’animal. Alerte affichée dans l’application uniquement.</p>
+      {detailed && <p className="v-meta mt-1">La balise mesure sa propre distance, pas la position de l’animal. Alerte affichée dans l’application uniquement.</p>}
       <button type="button" className="btn btn-sm mt-2" onClick={onAsk}>
-        Demander : quel animal s’est éloigné ?
+        {detailed ? 'Demander : quel animal s’est éloigné ?' : 'Qui s’est éloigné ?'}
       </button>
     </div>
   );
@@ -48,6 +48,7 @@ export function BeaconsPanel({
   result,
   error,
   defaultAnimal,
+  detailed,
   onChanged,
   onSource,
 }: {
@@ -55,11 +56,13 @@ export function BeaconsPanel({
   result: ToolResult<BeaconsData> | null;
   error: unknown;
   defaultAnimal: string | null;
+  detailed: boolean;
   onChanged: () => void;
   onSource: (ref: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [animalId, setAnimalId] = useState(defaultAnimal ?? '');
+  const [name, setName] = useState('');
   const [radius, setRadius] = useState(30);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -71,14 +74,18 @@ export function BeaconsPanel({
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
   const beacons = result?.data.beacons ?? [];
   const active = beacons.filter((b) => b.status !== 'STOPPED');
+  // Nom proposé : Poulet A, Poulet B… (première lettre libre). C'est le nom de la balise, pas un animal enregistré.
+  const nextName = `Poulet ${'ABCDEFGHIJ'.split('').find((l) => !beacons.some((b) => b.label === `Poulet ${l}`)) ?? 'A'}`;
 
   const pair = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    if (!animalId.trim()) return setMsg('Indiquez l’animal auquel associer la balise.');
     setBusy(true);
     try {
-      const r = await api<{ id: string; token: string }>('/api/farm/devices', { method: 'POST', session, body: { animalId: animalId.trim(), radiusM: radius } });
+      // Affichage simple : la balise porte un nom (« Poulet A »). L'association à un animal enregistré est facultative.
+      const label = name.trim() || (detailed ? undefined : nextName);
+      const r = await api<{ id: string; token: string }>('/api/farm/devices', { method: 'POST', session, body: { ...(label ? { label } : {}), ...(detailed && animalId.trim() ? { animalId: animalId.trim() } : {}), radiusM: radius } });
+      setName('');
       const url = `${window.location.origin}/#/balise/${encodeURIComponent(r.id)}/${encodeURIComponent(r.token)}`;
       const qr = await QRCode.toDataURL(url, { margin: 1, width: 220, errorCorrectionLevel: 'M' }).catch(() => null);
       setPaired({ id: r.id, url, qr });
@@ -104,16 +111,16 @@ export function BeaconsPanel({
     <section aria-labelledby="bal-h">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b-2 border-encre pb-2">
         <div>
-          <p className="v-kicker">Proximité · démonstration</p>
+          {detailed && <p className="v-kicker">Proximité · démonstration</p>}
           <h2 id="bal-h" className="v-display mt-0.5 text-[26px]">
             Balises
           </h2>
         </div>
         <button type="button" className="btn btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-          Associer une balise
+          {detailed ? 'Associer une balise' : 'Ajouter une balise'}
         </button>
       </div>
-      <p className="v-meta mt-2 max-w-[70ch]">Un téléphone joue le rôle d’un capteur de proximité : il transmet sa distance à un repère. Aucun capteur n’est posé sur un animal. Actualisé toutes les 4 secondes tant qu’une balise est suivie.</p>
+      <p className="v-meta mt-2 max-w-[70ch]">{detailed ? 'Un téléphone joue le rôle d’un capteur de proximité : il transmet sa distance à un repère. Aucun capteur n’est posé sur un animal. Actualisé toutes les 4 secondes tant qu’une balise est suivie.' : 'Un téléphone joue le rôle d’un capteur : aucun capteur n’est posé sur un animal.'}</p>
       {result?.data.simulated && (
         <p role="status" className="mt-2 bg-laterite-soft px-3 py-2 font-bold text-laterite">
           DONNÉES SIMULÉES : au moins une balise transmet une distance réglée à la main, pas une mesure.
@@ -124,15 +131,21 @@ export function BeaconsPanel({
         <form className="v-draft mt-3 space-y-3" onSubmit={pair} noValidate aria-label="Associer une balise de démonstration">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="field">
-              <label htmlFor="bal-animal">Animal associé</label>
-              <input id="bal-animal" className="input num" value={animalId} onChange={(e) => setAnimalId(e.target.value)} placeholder="ex. B-071" autoComplete="off" />
+              <label htmlFor="bal-name">Nom de la balise</label>
+              <input id="bal-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={detailed ? 'facultatif, ex. Poulet A' : nextName} maxLength={40} autoComplete="off" />
             </div>
+            {detailed && (
+              <div className="field">
+                <label htmlFor="bal-animal">Animal associé (facultatif)</label>
+                <input id="bal-animal" className="input num" value={animalId} onChange={(e) => setAnimalId(e.target.value)} placeholder="ex. B-071" autoComplete="off" />
+              </div>
+            )}
             <div className="field">
               <label htmlFor="bal-radius">Seuil de la zone, en mètres</label>
               <input id="bal-radius" className="input num" type="number" min={5} max={500} value={radius} onChange={(e) => setRadius(Number(e.target.value))} />
             </div>
           </div>
-          <p className="v-meta">Au-delà du seuil, et seulement si la précision de la mesure le permet, la balise est dite hors de sa zone.</p>
+          {detailed && <p className="v-meta">Au-delà du seuil, et seulement si la précision de la mesure le permet, la balise est dite hors de sa zone.</p>}
           <div className="flex flex-wrap gap-2">
             <button className="v-btn-go" style={{ minHeight: 44 }} disabled={busy}>
               {busy ? 'Association…' : 'Créer le lien de la balise'}
@@ -186,7 +199,8 @@ export function BeaconsPanel({
                     <span aria-hidden="true">{GLYPH[b.status]} </span>
                     {BEACON_STATUS_LABELS[b.status]}
                   </span>{' '}
-                  · <span className="num">{b.id}</span>
+                  · <span className="num">{beaconName(b)}</span>
+                  {detailed && beaconName(b) !== b.id && <span className="num text-encre-2"> ({b.id})</span>}
                   {b.animalId ? (
                     <>
                       {' '}
@@ -195,14 +209,24 @@ export function BeaconsPanel({
                   ) : null}
                 </p>
                 <p className="v-meta mt-0.5">
-                  {b.latest
+                  {!detailed
+                    ? b.latest
+                      ? `${b.latest.distanceM === null ? 'Pas de position' : `${Math.round(b.latest.distanceM)} m du repère`} · seuil ${b.radiusM} m${b.latest.source === 'SIMULATED' ? ' · distance SIMULÉE' : ''}`
+                      : `Seuil ${b.radiusM} m · aucune mesure reçue`
+                    : b.latest
                     ? `${b.latest.distanceM === null ? 'Pas de position' : `${Math.round(b.latest.distanceM)} m du repère`}${b.latest.accuracyM ? ` (± ${Math.round(b.latest.accuracyM)} m)` : ''} · seuil ${b.radiusM} m · observée à ${fmtState(b.latest.observedAt).slice(11)} · reçue à ${fmtState(b.latest.receivedAt).slice(11)} · ${b.latest.source === 'SIMULATED' ? 'distance SIMULÉE' : 'GPS du téléphone'}`
                     : `Seuil ${b.radiusM} m · aucune mesure reçue`}
                   {b.status === 'SILENT' ? ` · muette depuis ${b.silentSeconds} s (cela ne dit pas où elle se trouve)` : ''}
                 </p>
-                <p className="mt-1">
-                  <SourceChip sourceRef={`DEVICE:${b.id}`} onSource={onSource} />
-                </p>
+                {detailed ? (
+                  <p className="mt-1">
+                    <SourceChip sourceRef={`DEVICE:${b.id}`} onSource={onSource} />
+                  </p>
+                ) : (
+                  <button type="button" className="mt-1 text-[14px] text-encre-2 underline underline-offset-4" onClick={() => onSource(`DEVICE:${b.id}`)}>
+                    Voir le détail
+                  </button>
+                )}
               </div>
               {b.status !== 'STOPPED' && (
                 <button type="button" className="btn btn-sm" onClick={() => stop(b.id)}>
@@ -213,7 +237,7 @@ export function BeaconsPanel({
           ))}
         </ul>
       )}
-      {active.length > 0 && result && (
+      {detailed && active.length > 0 && result && (
         <p className="v-meta mt-2">
           Données lues à <span className="num">{fmtState(result.asOf).slice(11)}</span>.
         </p>

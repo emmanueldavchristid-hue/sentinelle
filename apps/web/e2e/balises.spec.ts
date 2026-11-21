@@ -13,9 +13,10 @@ test('balise : association, repère, éloignement, alerte, question, preuve, mod
 
   // Association à un animal : lien à ouvrir sur le téléphone, avec l'avertissement « localhost » quand il s'applique.
   await panel.getByRole('button', { name: 'Associer une balise' }).click();
+  await panel.getByLabel('Animal associé (facultatif)').fill('X-999');
   await panel.getByRole('button', { name: 'Créer le lien de la balise' }).click();
-  await expect(panel.getByRole('alert')).toContainText('Indiquez l’animal');
-  await panel.getByLabel('Animal associé').fill('b-071');
+  await expect(panel.getByRole('alert')).toContainText('Animal inconnu dans votre périmètre');
+  await panel.getByLabel('Animal associé (facultatif)').fill('b-071');
   await panel.getByRole('button', { name: 'Créer le lien de la balise' }).click();
   await expect(panel).toContainText(/Balise BAL-[0-9A-F]{4} créée/);
   await expect(panel.getByRole('img', { name: /QR code du lien de la balise/ })).toBeVisible();
@@ -38,7 +39,9 @@ test('balise : association, repère, éloignement, alerte, question, preuve, mod
   await expect(phone.getByRole('region', { name: 'État enregistré par le serveur' })).toContainText('Dans la zone', { timeout: 15_000 });
   expect(await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 
-  // L'écran de l'éleveur suit la balise, sans alerte tant qu'elle est dans la zone.
+  // L'écran de l'éleveur suit la balise, sans alerte tant qu'elle est dans la zone. La vue « zone » la place à sa distance.
+  await expect(page.getByRole('region', { name: 'Zone autour du repère' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('region', { name: 'Zone autour du repère' })).toContainText('La direction n’est pas mesurée');
   await expect(panel).toContainText('Dans la zone', { timeout: 15_000 });
   await expect(panel).toContainText('GPS du téléphone');
   await expect(page.getByRole('alert').filter({ hasText: 'hors de sa zone' })).toHaveCount(0);

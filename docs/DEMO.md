@@ -13,6 +13,10 @@ Ce script correspond au parcours d'acceptation en 16 étapes du brief, rejoué a
 7. Ne jamais afficher le fichier `.env` ni le terminal de démarrage à l'écran partagé (la clé n'y est pas écrite, mais autant ne pas montrer de configuration).
 
 ## Script
+L'application s'ouvre en **affichage simple**. Pour montrer les natures d'information, les sources et les dates sans cliquer, activer « Affichage détaillé » en haut à droite ; sinon, ouvrir « Détails et preuves » sous une réponse.
+
+Version entièrement à la voix (IA activée, micro autorisé) : toucher le gros bouton « Parler », dire la question, écouter la réponse ; dire « Ajoute une observation sur B zéro dix-sept : elle mange moins depuis ce matin », écouter le brouillon, dire « je confirme ». « Discussion » rouvre le micro après chaque réponse.
+
 | Temps | À faire | À dire |
 |---|---|---|
 | 0:00 | Écran d'ouverture | Chaque jour un élevage produit des informations. La question est de retrouver ce qui a changé, et d'où vient chaque réponse. Ici : ce qui est enregistré, ce qui est récent, ce qui manque, la dernière synchronisation. |

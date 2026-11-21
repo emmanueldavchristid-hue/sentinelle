@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { formatInstant } from '@sentinelle/domain';
-import type { Beacon, BeaconReading, BeaconsData, SourceData, Statement, ToolResult, ZoneState } from '@sentinelle/contracts';
+import { DEFAULT_BEACON_LABEL, type Beacon, type BeaconReading, type BeaconsData, type SourceData, type Statement, type ToolResult, type ZoneState } from '@sentinelle/contracts';
 import type { Db, Queryable } from './db.js';
 import { HttpError, parse, sha256, type User } from './http.js';
 
@@ -36,8 +36,10 @@ export function zoneOf(distanceM: number | null, accuracyM: number | null, radiu
 }
 
 export const CreateBeaconSchema = z.object({
-  animalId: z.string().trim().min(1, 'Indiquez l’animal associé').max(40),
-  label: z.string().trim().min(1).max(60).optional(),
+  /** Animal enregistré auquel associer la balise. Facultatif : une balise peut n'avoir qu'un nom (« Poulet A »). */
+  animalId: z.string().trim().max(40).optional(),
+  /** Nom donné à la balise pour la démonstration. Ce n'est pas un animal enregistré. */
+  label: z.string().trim().min(1).max(40).optional(),
   radiusM: z.number().int().min(5, 'Seuil de 5 m au moins').max(500, 'Seuil de 500 m au plus').default(30),
 });
 export const ReadingSchema = z.object({
@@ -84,9 +86,12 @@ async function loadBeacon(q: Queryable, d: DeviceRow, nowIso: string): Promise<B
 
 const SOURCE_TEXT: Record<BeaconReading['source'], string> = { PHONE_GPS: 'GPS du téléphone', SIMULATED: 'distance SIMULÉE à la main' };
 
+/** Nom d'une balise dans une phrase : son nom choisi entre guillemets, sinon son identifiant. */
+const shown = (b: { id: string; label: string }) => (b.label && b.label !== DEFAULT_BEACON_LABEL ? `« ${b.label} »` : b.id);
+
 /** Phrase de statut d'une balise. Toujours « la balise », jamais « l'animal ». */
 export function beaconSentence(b: Beacon): Statement {
-  const who = `Balise de démonstration ${b.id}${b.animalId ? `, associée à ${b.animalId}` : ''}`;
+  const who = `Balise de démonstration ${shown(b)}${b.animalId ? `, associée à ${b.animalId}` : ''}`;
   const src = [`DEVICE:${b.id}`, ...(b.animalId ? [`ANIMAL:${b.animalId}`] : [])];
   const l = b.latest;
   if (b.status === 'STOPPED') return { nature: 'FACT', text: `${who} : arrêtée le ${fmtSec(b.stoppedAt!)}.`, sources: src };
@@ -115,7 +120,7 @@ export function beaconFunctions(db: Db) {
     const statements: Statement[] = active.length
       ? [
           alerts.length
-            ? { nature: 'COMPUTED', text: `${alerts.length > 1 ? `${alerts.length} balises sont` : 'Une balise est'} hors de sa zone : ${alerts.map((b) => `${b.id}${b.animalId ? ` (associée à ${b.animalId})` : ''}`).join(', ')}.`, sources: alerts.map((b) => `DEVICE:${b.id}`) }
+            ? { nature: 'COMPUTED', text: `${alerts.length > 1 ? `${alerts.length} balises sont` : 'Une balise est'} hors de sa zone : ${alerts.map((b) => `${shown(b)}${b.animalId ? ` (associée à ${b.animalId})` : ''}`).join(', ')}.`, sources: alerts.map((b) => `DEVICE:${b.id}`) }
             : { nature: 'COMPUTED', text: `Aucune balise n’est hors de sa zone d’après les dernières mesures reçues (${active.length} balise${active.length > 1 ? 's' : ''} suivie${active.length > 1 ? 's' : ''}).`, sources: active.map((b) => `DEVICE:${b.id}`) },
           ...active.map(beaconSentence),
         ]
@@ -181,15 +186,15 @@ export function registerBeacons(ctx: Ctx) {
   ctx.app.post('/api/farm/devices', async (req, reply) => {
     const u = await ctx.currentUser(req);
     const body = parse(CreateBeaconSchema, req.body);
-    const animal = (await db.query<{ id: string }>('SELECT id FROM animals WHERE org_id = $1 AND (id = $2 OR UPPER(tag) = UPPER($2)) LIMIT 1', [u.org_id, body.animalId])).rows[0];
-    if (!animal) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { animalId: 'Animal inconnu dans votre périmètre' } });
+    const animal = body.animalId ? ((await db.query<{ id: string }>('SELECT id FROM animals WHERE org_id = $1 AND (id = $2 OR UPPER(tag) = UPPER($2)) LIMIT 1', [u.org_id, body.animalId])).rows[0] ?? null) : null;
+    if (body.animalId && !animal) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { animalId: 'Animal inconnu dans votre périmètre' } });
     const active = Number((await db.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM devices WHERE org_id = $1 AND stopped_at IS NULL', [u.org_id])).rows[0]!.n);
     if (active >= 5) throw new HttpError(409, 'CONFLICT', 'Cinq balises de démonstration au plus. Arrêtez-en une avant d’en associer une autre.');
     const id = `BAL-${randomBytes(3).toString('hex').toUpperCase().slice(0, 4)}`;
     const token = randomBytes(24).toString('base64url');
-    await db.query('INSERT INTO devices(id, org_id, label, animal_id, token_hash, radius_m, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, u.org_id, body.label ?? 'Téléphone de démonstration', animal.id, sha256(token), body.radiusM, u.id]);
-    await ctx.audit(db, u, 'DEVICE_PAIRED', 'device', id, { animalId: animal.id, radiusM: body.radiusM });
-    return reply.status(201).send({ id, token, animalId: animal.id, radiusM: body.radiusM });
+    await db.query('INSERT INTO devices(id, org_id, label, animal_id, token_hash, radius_m, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, u.org_id, body.label ?? DEFAULT_BEACON_LABEL, animal?.id ?? null, sha256(token), body.radiusM, u.id]);
+    await ctx.audit(db, u, 'DEVICE_PAIRED', 'device', id, { animalId: animal?.id ?? null, radiusM: body.radiusM });
+    return reply.status(201).send({ id, token, label: body.label ?? DEFAULT_BEACON_LABEL, animalId: animal?.id ?? null, radiusM: body.radiusM });
   });
 
   ctx.app.post('/api/farm/devices/:id/stop', async (req) => {

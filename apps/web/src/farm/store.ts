@@ -120,3 +120,30 @@ export function refsOf(reply: AssistantReply | null): string[] {
   if (!reply) return [];
   return [...new Set(reply.results.flatMap((r) => r.sources.map((s) => s.ref)))];
 }
+
+/**
+ * Affichage simple (par défaut) ou détaillé. Le mode simple n'enlève aucun contrôle : les natures d'information, les sources,
+ * les dates et les limites restent à un clic (« Détails et preuves »). Le mode détaillé les montre d'emblée.
+ */
+const DISPLAY_KEY = 'sentinelle.affichage';
+let detailed = (() => {
+  try {
+    return localStorage.getItem(DISPLAY_KEY) === 'detail';
+  } catch {
+    return false;
+  }
+})();
+export const display = {
+  detailed: () => detailed,
+  subscribe: (l: () => void) => (listeners.add(l), () => listeners.delete(l)),
+  set(on: boolean) {
+    detailed = on;
+    try {
+      localStorage.setItem(DISPLAY_KEY, on ? 'detail' : 'simple');
+    } catch {
+      /* préférence valable pour cette page seulement */
+    }
+    emit();
+  },
+};
+export const useDetailed = () => useSyncExternalStore(display.subscribe, display.detailed);

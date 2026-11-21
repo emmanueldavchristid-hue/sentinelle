@@ -217,6 +217,11 @@ export interface BeaconsData {
   /** Vrai si au moins une balise active transmet une distance simulée : bandeau « données simulées » obligatoire. */
   simulated: boolean;
 }
+/** Libellé donné à une balise quand l'utilisateur ne l'a pas nommée. */
+export const DEFAULT_BEACON_LABEL = 'Téléphone de démonstration';
+/** Nom affiché et dit d'une balise : le nom choisi (« Poulet A »), sinon son identifiant technique. */
+export const beaconName = (b: { id: string; label: string }): string => (b.label && b.label !== DEFAULT_BEACON_LABEL ? b.label : b.id);
+
 export const BEACON_STATUS_LABELS: Record<Beacon['status'], string> = {
   INSIDE: 'Dans la zone',
   OUTSIDE: 'Hors de la zone',

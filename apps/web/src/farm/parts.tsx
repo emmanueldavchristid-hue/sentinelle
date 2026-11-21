@@ -155,12 +155,12 @@ export function ResultView({ result, onSource }: { result: ToolResult; onSource:
 
 const EVENT_GLYPH: Record<FarmEvent['type'], string> = { OBSERVATION: '■', PRESENCE: '●', MOVEMENT: '→', CORRECTION: '✎', TASK_CREATED: '☐', TASK_REQUESTED: '☐', TASK_DONE: '☑' };
 
-export function Timeline({ events, highlight, fresh, onSource, empty }: { events: FarmEvent[]; highlight: ReadonlySet<string>; fresh: ReadonlySet<string>; onSource: (ref: string) => void; empty: string }) {
+export function Timeline({ events, highlight, fresh, onSource, empty, simple = false }: { events: FarmEvent[]; highlight: ReadonlySet<string>; fresh: ReadonlySet<string>; onSource: (ref: string) => void; empty: string; simple?: boolean }) {
   if (events.length === 0) {
     return (
       <div className="border border-dashed border-filet px-5 py-8">
         <p className="v-display text-[21px]">{empty}</p>
-        <p className="v-meta mt-1.5 max-w-[52ch]">Sans saisie, rien n’est observé : une chronologie vide ne dit rien de l’état des animaux.</p>
+        {!simple && <p className="v-meta mt-1.5 max-w-[52ch]">Sans saisie, rien n’est observé : une chronologie vide ne dit rien de l’état des animaux.</p>}
       </div>
     );
   }
@@ -183,7 +183,15 @@ export function Timeline({ events, highlight, fresh, onSource, empty }: { events
             <div className="min-w-0">
               <p className="font-semibold leading-snug">{e.title}</p>
               {e.detail && <p className="max-w-[62ch] leading-snug">{e.detail}</p>}
-              <p className="v-meta mt-1">
+              {simple && (
+                <p className="mt-1 flex flex-wrap items-center gap-x-3">
+                  {isFresh && <span className="v-field-flag text-laterite">nouveau</span>}
+                  <button type="button" className="text-[14px] text-encre-2 underline underline-offset-4" onClick={() => onSource(base)}>
+                    Voir le détail
+                  </button>
+                </p>
+              )}
+              <p className="v-meta mt-1" hidden={simple}>
                 {e.deviceRecordedAt && (
                   <>
                     Saisie sur l’appareil : <span className="num">{fmtInstant(e.deviceRecordedAt)}</span> ·{' '}
@@ -192,7 +200,7 @@ export function Timeline({ events, highlight, fresh, onSource, empty }: { events
                 Reçu par le serveur : <span className="num">{fmtInstant(e.recordedAt)}</span>
                 {e.author ? ` · ${e.author}` : ''}
               </p>
-              <p className="mt-1.5 flex flex-wrap items-center gap-x-2">
+              <p className="mt-1.5 flex flex-wrap items-center gap-x-2" hidden={simple}>
                 <span className="v-field-flag text-encre-2">{CHANGE_LABELS[e.change]}</span>
                 {isFresh && <span className="v-field-flag text-laterite">· nouveau, confirmé pendant cette session</span>}
                 <SourceChip sourceRef={base} onSource={onSource} />
@@ -202,6 +210,82 @@ export function Timeline({ events, highlight, fresh, onSource, empty }: { events
         );
       })}
     </ol>
+  );
+}
+
+// ---------- Affichage simple : la réponse en phrases courtes, les preuves à un clic ----------
+
+/** Retire d'une phrase les précisions techniques entre parenthèses (dates de réception, révisions, précision, source). */
+export function plainSentence(text: string): string {
+  return text
+    .replace(/\s*\((?:[^()]*(?:reçu|révision|précision|source :|\d{2}\/\d{2}\/\d{4})[^()]*)\)/g, '')
+    // Après le retrait d'une parenthèse : pas d'espace avant un point ou une virgule, pas de point doublé.
+    // L'espace avant « : » et « ; » est voulue en français : elle est conservée.
+    .replace(/\s+([.,])/g, '$1')
+    .replace(/\.{2,}/g, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/** Réponse en mode simple : quelques phrases lisibles, sans libellés ni identifiants. Rien n'est ajouté au texte du serveur. */
+export function PlainAnswer({ result, max = 5 }: { result: ToolResult; max?: number }) {
+  const lines = result.statements.slice(0, max).map((st) => plainSentence(st.text)).filter(Boolean);
+  return (
+    <div className="space-y-2">
+      {lines.map((l, i) => (
+        <p key={i} className={`max-w-[60ch] leading-[1.45] ${i === 0 ? 'text-[19px] font-semibold' : 'text-[17px]'}`}>
+          {l}
+        </p>
+      ))}
+      {result.statements.length > max && <p className="v-meta">Et {result.statements.length - max} autres lignes dans les détails.</p>}
+    </div>
+  );
+}
+
+const CheckIcon = () => (
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 12.5l5 5L20 6.5" />
+  </svg>
+);
+const CrossIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+
+/**
+ * Brouillon en mode simple : ce qui va être enregistré, en clair, et deux gros boutons à icône.
+ * « Modifier » ouvre le formulaire complet. Si un champ manque, le formulaire est ouvert d'office.
+ */
+export function SimpleDraft({ draft, sites, busy, onConfirm, onDiscard, onEdit }: { draft: ObservationDraftData; sites: SiteSummary[]; busy: boolean; onConfirm: (v: DraftValues) => void; onDiscard: () => void; onEdit: () => void }) {
+  const site = sites.find((x) => x.id === draft.site.value)?.name ?? draft.site.value ?? '';
+  const values: DraftValues | null = draft.ready && draft.animal.value && draft.site.value && draft.eventTime.value && draft.note.value ? { animalId: draft.animal.value, locationId: draft.site.value, eventTime: draft.eventTime.value, note: draft.note.value } : null;
+  if (!values) return null;
+  return (
+    <div className="v-draft space-y-3" role="group" aria-label="Observation à confirmer">
+      <p className="v-kicker">À confirmer · rien n’est encore enregistré</p>
+      <p className="v-display text-[24px] leading-[1.2]">« {values.note} »</p>
+      <p className="text-[17px]">
+        <b className="num">{values.animalId}</b> · {site} · {formatTemporal(values.eventTime as TemporalValue)}
+      </p>
+      {draft.possibleDuplicate && <p className="border-l-[3px] border-amber-line pl-3 text-amber">Une observation identique a déjà été enregistrée aujourd’hui.</p>}
+      <div className="flex flex-wrap gap-3">
+        <button type="button" className="v-big-ok" disabled={busy} onClick={() => onConfirm(values)}>
+          <CheckIcon />
+          {busy ? 'Enregistrement…' : 'Confirmer'}
+        </button>
+        <button type="button" className="v-big-no" disabled={busy} onClick={onDiscard}>
+          <CrossIcon />
+          Annuler
+        </button>
+      </div>
+      <p className="v-meta">
+        Vous pouvez aussi dire ou écrire « je confirme ».{' '}
+        <button type="button" className="underline underline-offset-4" onClick={onEdit}>
+          Modifier
+        </button>
+      </p>
+    </div>
   );
 }
 

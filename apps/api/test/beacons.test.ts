@@ -164,6 +164,19 @@ describe('Balise de démonstration : association, mesures, alerte, preuve', () =
     expect(s.data.recent.counts.total).toBe(5);
   });
 
+  it('balise nommée sans animal (« Poulet A ») : le nom remplace l’identifiant dans les phrases, sans créer d’animal', async () => {
+    const r = await pair({ label: 'Poulet A', radiusM: 15 });
+    expect(r.statusCode).toBe(201);
+    const b = r.json() as { id: string; token: string; animalId: string | null; label: string };
+    expect(b).toMatchObject({ label: 'Poulet A', animalId: null });
+    expect((await send(b.id, b.token, { distanceM: 40, accuracyM: 5 })).json().zone).toBe('OUTSIDE');
+    const l = await list();
+    expect(l.statements[0]!.text).toBe('Une balise est hors de sa zone : « Poulet A ».');
+    expect(l.statements[1]!.text).toMatch(/^Balise de démonstration « Poulet A » : HORS de la zone\. 40 m du repère \(précision ± 5 m\), pour un seuil de 15 m/);
+    const s = (await app.inject({ url: '/api/farm/situation', headers: FARMER })).json() as ToolResult<SituationData>;
+    expect(s.data.animals.total).toBe(8);
+  });
+
   it('la réinitialisation de la démonstration efface les balises', async () => {
     await resetAndSeed(db, { living: true });
     expect((await list()).data.beacons).toEqual([]);

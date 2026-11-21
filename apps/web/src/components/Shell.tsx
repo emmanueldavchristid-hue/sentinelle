@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { formatInstant } from '@sentinelle/domain';
 import { go, useApp } from '../state';
+import { useDetailed } from '../farm/store';
 
 const NAV = {
   FARMER: [
@@ -24,6 +25,8 @@ const NAV = {
 
 export function ConnectionControl({ compact = false }: { compact?: boolean }) {
   const { connection, lastCheck, checkConnection, simulated, setSimulated, health } = useApp();
+  // Affichage simple : l'interrupteur de simulation de coupure réseau est un outil de démonstration, masqué sauf s'il est actif.
+  const detailed = useDetailed();
   const label = connection === 'online' ? 'Serveur joignable' : connection === 'offline' ? 'Hors connexion' : 'Vérification…';
   const cls = connection === 'online' ? 'border-petrol/30 bg-petrol-soft text-petrol' : connection === 'offline' ? 'border-amber-line bg-amber-soft text-amber' : '';
   return (
@@ -41,7 +44,7 @@ export function ConnectionControl({ compact = false }: { compact?: boolean }) {
       <span className="sr-only" role="status">
         {label}
       </span>
-      {health?.demoMode !== false && (
+      {health?.demoMode !== false && (detailed || simulated) && (
         <label className="pill min-h-9 cursor-pointer" title="Bloque les appels réseau dans ce navigateur, pour la démonstration">
           <input type="checkbox" checked={simulated} onChange={(e) => setSimulated(e.target.checked)} />
           Couper le réseau <span className="text-ink-2">(simulation démo)</span>

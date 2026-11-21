@@ -9,6 +9,8 @@ import { defineConfig, devices } from '@playwright/test';
  */
 const executablePath = process.env.CHROME_PATH;
 const PORT = Number(process.env.E2E_PORT ?? 3100);
+/** Les tests historiques vérifient les libellés, sources et dates : ils tournent en affichage détaillé. simple.spec.ts couvre l'affichage simple. */
+const DETAILED = { cookies: [], origins: [{ origin: `http://127.0.0.1:${PORT}`, localStorage: [{ name: 'sentinelle.affichage', value: 'detail' }] }] };
 
 export default defineConfig({
   testDir: './e2e',
@@ -22,7 +24,7 @@ export default defineConfig({
     ...(executablePath ? { launchOptions: { executablePath, args: ['--no-sandbox'] } } : { channel: process.env.PW_CHANNEL || undefined }),
   },
   projects: [
-    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec/, use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
     // Dictée avec un faux microphone (fichier WAV de synthèse) et un vrai appel de transcription : seulement si VOIX=1.
     {
       name: 'voix',
@@ -32,13 +34,13 @@ export default defineConfig({
         permissions: ['microphone'],
         launchOptions: {
           ...(executablePath ? { executablePath } : {}),
-          args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-b017.wav')}`, ...(executablePath ? ['--no-sandbox'] : [])],
+          args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-b017.wav')}%noloop`, ...(executablePath ? ['--no-sandbox'] : [])],
         },
         ...(executablePath ? { channel: undefined } : {}),
       },
     },
     // Capture réelle du parcours (vidéo) : ne s'exécute que si CAPTURE=1 (voir capture.spec.ts), sinon elle est ignorée.
-    { name: 'capture', testMatch: /capture\.spec/, use: { ...devices['Desktop Chrome'], ...(executablePath ? { channel: undefined } : {}) } },
+    { name: 'capture', testMatch: /capture\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, ...(executablePath ? { channel: undefined } : {}) } },
     // Mode authentifié (DEMO_MODE=false) : serveur distinct, compte créé par le script CLI. Commande shell POSIX : ignoré sous Windows.
     ...(process.platform === 'win32'
       ? []

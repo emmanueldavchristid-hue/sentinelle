@@ -25,7 +25,7 @@ test('boucle de preuve vivante : question, sources, fiche, brouillon, confirmati
   await expect(page.getByRole('group', { name: 'Situation enregistrée' })).toContainText('8');
   await expect(talk).toContainText('Assistant IA non configuré');
   // Sans assistant IA, la dictée est annoncée indisponible (pas de bouton factice) et le texte reste l'accès complet.
-  await expect(talk.getByRole('button', { name: 'Dicter' })).toBeDisabled();
+  await expect(talk.getByRole('button', { name: 'Parler' })).toBeDisabled();
   await expect(talk).toContainText('Dictée indisponible : la transcription passe par l’assistant IA');
   // Réponses à voix haute : activées par défaut (voix de synthèse de l'appareil quand le serveur n'en fournit pas), et coupables.
   const voiceToggle = talk.getByRole('button', { name: /Réponses à voix haute/ });
