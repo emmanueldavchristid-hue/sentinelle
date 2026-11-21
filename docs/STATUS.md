@@ -48,10 +48,10 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 - **Clés exposées** : les clés ont transité par WhatsApp et par la conversation Claude. À régénérer après la démonstration. La clé « grok » est en réalité une clé Groq (`gsk_`) : non enregistrée, non utilisée.
 - **Palier gratuit Google** : d'après la documentation lue le 21/11, le contenu envoyé sur le palier gratuit sert à améliorer les produits Google. Acceptable ici (données synthétiques), à revoir avant toute donnée réelle. La facturation du projet Google de la clé n'est pas visible depuis ce poste.
 - **Règlement du concours** : autorisation du code préalable toujours non confirmée (D-01, D-09).
-- La base locale `data/pglite` de Yvan n'a pas été réinitialisée : le jeu vivant n'y apparaît qu'après « Réinitialiser le scénario » (accord de Yvan requis, action destructive).
+- Base locale `data/pglite` : réinitialisée le 21/11 à 15:15 avec l'accord de Yvan (jeu vivant chargé, vérifié : 8 animaux, 5 enregistrements depuis hier). Sauvegarde de l'état précédent : `data/sauvegardes/avant-jeu-vivant-2026-11-21.tar.gz` (hors Git). **Les dates du jeu sont relatives au jour de la réinitialisation : à refaire le jour de la démonstration** (`pnpm demo:reset` serveur arrêté, ou « Réinitialiser le scénario »), sinon « depuis hier » sera vide.
 
 ## Prochaine action précise
-1. Décision de Yvan : réinitialiser `data/pglite` (serveur arrêté : `pnpm demo:reset`) pour charger le jeu vivant sur la base de démonstration.
+1. Le jour de la démonstration : réinitialiser de nouveau le jeu (dates relatives), lancer `pnpm assistant:check`, puis dérouler `docs/DEMO.md` une fois en entier sur `http://localhost:3000`.
 2. Tranche 9 : rejouer `PW_CHANNEL=chrome pnpm e2e` après toute modification ; faire rejouer `auth.spec.ts` en CI.
 3. Décisions de Yvan pour la vidéo de vision (voir `docs/VIDEO.md`, « Points ouverts ») : voie de montage, plans générés ou motion design, voix.
 4. Voix (tranche 7) : non commencée ; à n'aborder que si le temps le permet, testée séparément du texte.
