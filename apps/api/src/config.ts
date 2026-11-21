@@ -49,6 +49,10 @@ export const config = {
   assistantOff: (process.env.ASSISTANT_AI ?? '').trim().toLowerCase() === 'off',
   /** Modèle de secours si le modèle principal est surchargé (503). Facultatif. */
   geminiFallbackModel: (process.env.GEMINI_FALLBACK_MODEL ?? '').trim(),
+  /** Modèle de synthèse vocale pour les réponses parlées. Vide : la voix de synthèse de l'appareil est utilisée à la place. */
+  geminiTtsModel: (process.env.GEMINI_TTS_MODEL ?? '').trim(),
+  /** Voix préconstruite du modèle de synthèse (par exemple Kore). */
+  geminiTtsVoice: (process.env.GEMINI_TTS_VOICE ?? '').trim() || 'Kore',
   geminiLiveModel: (process.env.GEMINI_LIVE_MODEL ?? '').trim(),
   assistantTimeoutMs: int(process.env.ASSISTANT_TIMEOUT_MS, 20_000, 2_000, 120_000),
   assistantMaxRequestsPerSession: int(process.env.ASSISTANT_MAX_REQUESTS_PER_SESSION, 40, 1, 1000),

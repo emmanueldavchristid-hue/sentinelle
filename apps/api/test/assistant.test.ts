@@ -6,7 +6,7 @@ import { buildApp } from '../src/app.js';
 import { recognize } from '../src/assistant.js';
 import { checkAssistantConfig } from '../src/config.js';
 import { type Db, migrate } from '../src/db.js';
-import { GeminiError, geminiModel, listGeminiModels, type AssistantModel } from '../src/gemini.js';
+import { GeminiError, geminiModel, listGeminiModels, pcmToWav, type AssistantModel } from '../src/gemini.js';
 import { resetAndSeed } from '../src/seed.js';
 import { openTestDb } from './helpers.js';
 
@@ -283,7 +283,7 @@ describe('Dictée : relais serveur, enregistrement court, rien de conservé', ()
     const r = await post(app, { mimeType: 'audio/wav', audio: wav(1) });
     expect(r.statusCode).toBe(503);
     expect(r.json().message).toMatch(/Dictée indisponible.*Utilisez le texte/);
-    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: false, maxSeconds: 30 });
+    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: false, maxSeconds: 30, speech: false });
     await app.close();
   });
 
@@ -295,7 +295,7 @@ describe('Dictée : relais serveur, enregistrement court, rien de conservé', ()
     expect(r.json()).toMatchObject({ text: 'Ajoute une observation sur B-017. Elle mange moins depuis ce matin.', provider: 'Faux modèle (test)' });
     expect(r.json().notice).toMatch(/relisez-la.*n’est pas conservé/);
     expect(got).toMatchObject({ mimeType: 'audio/wav' });
-    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: true, maxSeconds: 10 });
+    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: true, maxSeconds: 10, speech: false });
     const logged = (await db.query<{ detail: unknown }>(`SELECT detail FROM audit_events WHERE action = 'ASSISTANT_TRANSCRIBE' ORDER BY id DESC LIMIT 1`)).rows[0]!.detail;
     expect(JSON.stringify(logged)).not.toMatch(/mange moins|UklGR/);
     // Le texte transcrit suit le parcours écrit : il ne produit qu'un brouillon.
@@ -319,6 +319,45 @@ describe('Dictée : relais serveur, enregistrement court, rien de conservé', ()
     expect(down.statusCode).toBe(502);
     expect(down.json().message).toMatch(/Service Gemini indisponible.*Utilisez le texte/);
     await app.close();
+  });
+});
+
+describe('Réponse parlée : le texte affiché est rendu en son, rien n’est conservé', () => {
+  const speakModel = (speak: NonNullable<AssistantModel['speak']>): AssistantModel => ({ provider: 'Faux modèle', model: 'test', runWithTools: async () => ({ text: '', calls: [] }), speak });
+  const post = (app: Awaited<ReturnType<typeof buildApp>>, payload: unknown, headers: Record<string, string> = FARMER) => app.inject({ method: 'POST', url: '/api/assistant/speak', headers, payload: payload as object });
+
+  it('sans modèle vocal : 503 lisible, et l’état annonce que la voix de l’appareil prend le relais', async () => {
+    const app = await buildApp({ db, demoMode: true });
+    const r = await post(app, { text: 'Bonjour' });
+    expect(r.statusCode).toBe(503);
+    expect(r.json().message).toMatch(/voix de synthèse de l’appareil prend le relais/);
+    expect((await app.inject({ url: '/api/health' })).json().assistant.voice.speech).toBe(false);
+    await app.close();
+  });
+
+  it('rend un son WAV pour le texte fourni, sans journaliser le texte ; entrées invalides et panne dites clairement', async () => {
+    let asked = '';
+    const sound = pcmToWav(Buffer.alloc(48_000), 24_000);
+    const app = await buildApp({ db, demoMode: true, assistant: { model: speakModel(async (i) => ((asked = i.text), sound)) } });
+    expect((await app.inject({ url: '/api/health' })).json().assistant.voice.speech).toBe(true);
+    const r = await post(app, { text: 'Cinq enregistrements ont été reçus depuis hier.' });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['content-type']).toContain('audio/wav');
+    expect(r.rawPayload.subarray(0, 4).toString('ascii')).toBe('RIFF');
+    expect(r.rawPayload.length).toBe(sound.length);
+    expect(asked).toBe('Cinq enregistrements ont été reçus depuis hier.');
+    const logged = (await db.query<{ detail: unknown }>(`SELECT detail FROM audit_events WHERE action = 'ASSISTANT_SPEAK' ORDER BY id DESC LIMIT 1`)).rows[0]!.detail;
+    expect(JSON.stringify(logged)).not.toMatch(/enregistrements/);
+    expect((await post(app, { text: '' })).statusCode).toBe(400);
+    expect((await post(app, { text: 'x'.repeat(901) })).statusCode).toBe(400);
+    expect((await post(app, { text: 'Bonjour' }, {})).statusCode).toBe(401);
+    await app.close();
+
+    const down = await buildApp({ db, demoMode: true, assistant: { model: speakModel(async () => { throw new GeminiError(503, 'UNAVAILABLE', 'Service Gemini indisponible (503).'); }) } });
+    const failed = await post(down, { text: 'Bonjour' });
+    expect(failed.statusCode).toBe(502);
+    expect(failed.json().message).toMatch(/Service Gemini indisponible/);
+    await down.close();
   });
 });
 
@@ -387,6 +426,23 @@ describe('Client Gemini (format des requêtes vérifié contre un faux serveur H
     const parts = (sent.body as { contents: { parts: Record<string, unknown>[] }[] }).contents[0]!.parts;
     expect(parts[1]).toEqual({ inlineData: { mimeType: 'audio/wav', data: 'QUJD' } });
     expect(String(parts[0]!.text)).toMatch(/Transcris mot pour mot/);
+  });
+
+  it('synthèse vocale : seul le texte à dire est envoyé (aucune consigne), modèle vocal dédié, son rendu en WAV', async () => {
+    const before = seen.length;
+    const m = geminiModel({ apiKey: FAKE_KEY, model: 'modele-a', ttsModel: 'modele-voix', ttsVoice: 'Kore', baseUrl: base });
+    // Le faux serveur ne renvoie pas de son : le client doit le dire clairement plutôt que de rendre un fichier vide.
+    const err = await m.speak!({ text: 'Bonjour.', signal: new AbortController().signal }).catch((e) => e as GeminiError);
+    expect(err).toBeInstanceOf(GeminiError);
+    expect((err as GeminiError).code).toBe('EMPTY');
+    const sent = seen[before]!;
+    expect(sent.url).toBe('/v1beta/models/modele-voix:generateContent');
+    expect(sent.key).toBe(FAKE_KEY);
+    const body = sent.body as { contents: { parts: Record<string, unknown>[] }[]; generationConfig: Record<string, unknown> };
+    expect(body.contents[0]!.parts).toEqual([{ text: 'Bonjour.' }]);
+    expect(body.generationConfig).toEqual({ responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } } });
+    expect(geminiModel({ apiKey: FAKE_KEY, model: 'modele-a', baseUrl: base }).speak).toBeUndefined();
+    expect(pcmToWav(Buffer.alloc(10), 24_000).subarray(0, 4).toString('ascii')).toBe('RIFF');
   });
 
   it('liste les modèles disponibles', async () => {

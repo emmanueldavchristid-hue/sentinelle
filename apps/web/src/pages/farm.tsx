@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnimalData, AssistantReply, BeaconsData, ChangesData, ObservationDraftData, SituationData, ToolResult } from '@sentinelle/contracts';
 import { api, ApiFailure, errorMessage, NetworkError } from '../api';
 import { enqueueObservation } from '../local';
+import { formatTemporal, type TemporalValue } from '@sentinelle/domain';
 import { go, useApp } from '../state';
 import { BeaconAlert, BeaconsPanel } from '../farm/Beacons';
 import { Constellation } from '../farm/Constellation';
-import { canSpeak, Dictation, speak, stopSpeaking } from '../farm/Voice';
+import { canSpeak, Dictation, playSpeech, stopSpeech, voiceRepliesPref, type VoiceVia } from '../farm/Voice';
 import { DraftCard, describeDraft, EvidenceDialog, fmtInstant, fmtState, ResultView, SourceChip, Timeline, type DraftValues } from '../farm/parts';
 import { conversation, draftOf, firstResult, refsOf, resultDigest, resultKey, resultSummary, session as farmSession, useExchanges, useFresh, useWrites, type Exchange } from '../farm/store';
 
@@ -62,12 +63,34 @@ function localDraftReply(animalId: string | null): AssistantReply {
   };
 }
 
-/** Texte lu à voix haute pour une réponse : le texte de l'IA, sinon les premières phrases de la lecture, sans les identifiants de source. */
-const spokenText = (reply: AssistantReply | null): string =>
-  (reply?.text ?? reply?.results[0]?.statements.slice(0, 4).map((st) => st.text).join(' ') ?? reply?.notice ?? '')
+/**
+ * Texte dit à voix haute pour une réponse : le texte de l'IA, sinon les premières phrases de la lecture, sans les identifiants
+ * de source. Un brouillon est décrit en entier (animal, lieu, date, texte) pour qu'une personne qui ne lit pas sache ce qu'elle
+ * va confirmer. Rien n'est dit qui ne soit pas affiché.
+ */
+function spokenText(reply: AssistantReply | null, sites: { id: string; name: string }[] = []): string {
+  if (!reply) return '';
+  const draft = reply.results.find((r) => r.tool === 'prepare_observation') as ToolResult<ObservationDraftData> | undefined;
+  let said: string;
+  if (draft) {
+    const d = draft.data;
+    const site = d.site.value ? (sites.find((x) => x.id === d.site.value)?.name ?? d.site.value) : null;
+    said = [
+      'Brouillon préparé. Rien n’est enregistré pour l’instant.',
+      d.animal.value ? `Animal : ${d.animal.value}.` : 'L’animal reste à indiquer.',
+      site ? `Lieu : ${site}${d.site.status === 'DEDUCED' ? ', proposé, à vérifier' : ''}.` : 'Le lieu reste à indiquer.',
+      d.eventTime.value ? `Date de l’événement : ${formatTemporal(d.eventTime.value as TemporalValue)}.` : 'La date reste à indiquer.',
+      d.note.value ? `Ce qui est constaté : ${d.note.value}.` : 'Le texte reste à compléter.',
+      d.ready ? 'Si c’est exact, appuyez sur Confirmer et enregistrer.' : 'Complétez ce qui manque avant de confirmer.',
+    ].join(' ');
+  } else {
+    said = reply.text ?? reply.results[0]?.statements.slice(0, 4).map((st) => st.text).join(' ') ?? reply.notice ?? '';
+  }
+  return said
     .replace(/\[(?:OBS|REC|TASK|ANIMAL|SITE|DEVICE):[^\]]+\]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
 
 const newExchange = (question: string): Exchange => ({ id: crypto.randomUUID(), question, askedAt: new Date().toISOString(), pending: true, error: null, offline: false, reply: null, key: null, update: null, compared: null, draft: null, receipt: null });
 
@@ -108,27 +131,62 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
   const latest = exchanges.find((e) => e.reply) ?? null;
   const highlight = useMemo(() => new Set(latest ? refsOf(latest.reply) : []), [latest]);
   const sites = situation.data?.data.sites ?? [];
+  const sitesRef = useRef(sites);
+  sitesRef.current = sites;
   const s = situation.data?.data ?? null;
   const offline = connection === 'offline';
   const assistant = health?.assistant;
   const [dictated, setDictated] = useState<string | null>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
-  useEffect(() => () => void stopSpeaking(), []);
+  const [voiceState, setVoiceState] = useState<'loading' | VoiceVia | null>(null);
+  const [voiceReplies, setVoiceReplies] = useState(voiceRepliesPref.get);
+  useEffect(() => () => stopSpeech(), []);
+  const serverVoice = !!assistant?.voice?.speech && !offline;
+  const canHear = serverVoice || canSpeak();
+  /** Dit un texte à voix haute (voix de synthèse du serveur, sinon de l'appareil). `id` désigne l'échange concerné. */
+  const say = useCallback(
+    (id: string, said: string) => {
+      if (!said) return;
+      setSpeakingId(id);
+      void playSpeech(said, {
+        session,
+        server: serverVoice,
+        onState: (st) => {
+          setVoiceState(st);
+          if (st === null) setSpeakingId((cur) => (cur === id ? null : cur));
+        },
+      });
+    },
+    [session, serverVoice],
+  );
+  // Les fonctions asynchrones lisent toujours la préférence et la voix courantes.
+  const voice = useRef({ on: voiceReplies, say });
+  voice.current = { on: voiceReplies, say };
+  const autoSay = (id: string, said: string) => voice.current.on && voice.current.say(id, said);
+  // Une balise qui sort de sa zone est aussi annoncée à voix haute, une fois, si les réponses vocales sont activées.
+  const alertKey = (beacons.data?.data.alerts ?? []).join(',');
+  const lastAlert = useRef('');
+  useEffect(() => {
+    if (alertKey && alertKey !== lastAlert.current) {
+      const out = (beacons.data?.data.beacons ?? []).filter((b) => beacons.data!.data.alerts.includes(b.id));
+      autoSay('alerte-balise', `Attention. ${out.map((b) => `La balise ${b.animalId ? `associée à ${b.animalId}` : b.id} est hors de sa zone`).join('. ')}.`);
+    }
+    lastAlert.current = alertKey;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertKey]);
   const onDictated = useCallback((t: string) => {
     setText(t);
     setDictated(t);
     inputRef.current?.focus();
   }, []);
-  /** Lecture à voix haute d'une réponse par la voix de synthèse de l'appareil (aucun service externe). */
+  /** Bouton « Écouter » d'une réponse : lit, ou arrête si elle est en cours de lecture. */
   const listen = (ex: Exchange) => {
     if (speakingId === ex.id) {
-      stopSpeaking();
+      stopSpeech();
+      setVoiceState(null);
       return setSpeakingId(null);
     }
-    const said = spokenText(ex.reply);
-    if (!said) return;
-    setSpeakingId(ex.id);
-    speak(said, () => setSpeakingId((id) => (id === ex.id ? null : id)));
+    say(ex.id, spokenText(ex.reply, sites) || ex.error || '');
   };
 
   const ask = useCallback(
@@ -160,16 +218,15 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
         const update = first && prevResult && resultDigest(prevResult) !== resultDigest(first) ? { previousAsOf: prevResult.asOf, previousSummary: resultSummary(prevResult), currentSummary: resultSummary(first) } : null;
         const compared = reply.intent === 'why_changed' && compare && updated ? { from: compare.from, to: compare.to, before: updated.update!.previousSummary, after: updated.update!.currentSummary } : null;
         conversation.patch(ex.id, { pending: false, reply, key, update, compared, draft: reply.results.some((r) => r.tool === 'prepare_observation') ? 'open' : null });
-        // Question dictée : la réponse est aussi lue à voix haute (voix de synthèse de l'appareil), sans rien changer à l'écran.
-        if (spoken && canSpeak() && spokenText(reply)) {
-          setSpeakingId(ex.id);
-          speak(spokenText(reply), () => setSpeakingId((id) => (id === ex.id ? null : id)));
-        }
+        // Réponses à voix haute : chaque réponse est aussi dite (toujours si la question a été dictée), sans rien changer à l'écran.
+        if (spoken) voice.current.say(ex.id, spokenText(reply, sitesRef.current));
+        else autoSay(ex.id, spokenText(reply, sitesRef.current));
         if (reply.results.some((r) => r.tool === 'beacons')) setBeaconTick((n) => n + 1);
         const shown = reply.results.find((r) => r.tool === 'animal');
         if (shown) go(`elevage/animal/${encodeURIComponent(String(shown.params.animalId))}`);
       } catch (e) {
         const off = e instanceof NetworkError;
+        autoSay(ex.id, off ? 'Serveur injoignable. La conversation est indisponible, aucune réponse n’est inventée.' : 'La demande n’a pas pu aboutir.');
         conversation.patch(ex.id, {
           pending: false,
           offline: off,
@@ -222,11 +279,13 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
       const ref = `OBS:${item.id}`;
       const label = describeDraft(values, sites);
       if (saved?.state === 'RECEIVED') {
+        autoSay(ex.id, 'Observation enregistrée. Le serveur a confirmé la réception.');
         conversation.patch(ex.id, { draft: 'confirmed', receipt: { state: 'RECEIVED', ref, receivedAt: saved.receivedAt, duplicate: false, message: label } });
         farmSession.markWritten(ref);
       } else if (saved?.state === 'FAILED' && saved.permanent) {
         conversation.patch(ex.id, { draft: 'open', receipt: { state: 'FAILED', ref, receivedAt: null, duplicate: false, message: saved.lastError ?? 'Refusée par le serveur' } });
       } else {
+        autoSay(ex.id, 'Observation gardée sur cet appareil. Le serveur n’a pas encore confirmé la réception.');
         conversation.patch(ex.id, { draft: 'confirmed', receipt: { state: 'QUEUED', ref, receivedAt: null, duplicate: false, message: label } });
       }
     },
@@ -437,6 +496,28 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
               onText={onDictated}
             />
           </div>
+          {canHear && (
+            <p className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="v-chip"
+                aria-pressed={voiceReplies}
+                onClick={() => {
+                  const on = !voiceReplies;
+                  setVoiceReplies(on);
+                  voiceRepliesPref.set(on);
+                  if (!on) {
+                    stopSpeech();
+                    setSpeakingId(null);
+                    setVoiceState(null);
+                  }
+                }}
+              >
+                {voiceReplies ? 'Réponses à voix haute : oui' : 'Réponses à voix haute : non'}
+              </button>
+              <span className="v-meta">{voiceReplies ? (serverVoice ? 'Chaque réponse est aussi dite par une voix de synthèse (Gemini).' : 'Chaque réponse est aussi dite par la voix de synthèse de cet appareil.') : 'Les réponses restent écoutables une à une avec « Écouter la réponse ».'}</span>
+            </p>
+          )}
           <div className="mt-2.5 flex flex-wrap gap-2">
             {QUICK.map((q) => (
               <button key={q} type="button" className="v-chip" onClick={() => ask(q)}>
@@ -485,10 +566,17 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
                   {ex.reply && (
                     <div className="mt-3 space-y-3">
                       <p className="v-notice">{ex.reply.notice}</p>
-                      {canSpeak() && (ex.reply.text || ex.reply.results.length > 0) && (
-                        <button type="button" className="v-chip" aria-pressed={speakingId === ex.id} onClick={() => listen(ex)} title="Voix de synthèse de cet appareil, sans service externe">
-                          {speakingId === ex.id ? '■ Arrêter la lecture' : '▶ Écouter la réponse'}
-                        </button>
+                      {canHear && spokenText(ex.reply, sites) && (
+                        <p className="flex flex-wrap items-center gap-2">
+                          <button type="button" className="v-chip" aria-pressed={speakingId === ex.id} onClick={() => listen(ex)}>
+                            {speakingId === ex.id ? '■ Arrêter la lecture' : '▶ Écouter la réponse'}
+                          </button>
+                          {speakingId === ex.id && (
+                            <span className="v-meta" role="status">
+                              {voiceState === 'loading' ? 'La voix se prépare…' : voiceState === 'server' ? 'Voix de synthèse (Gemini). Elle lit le texte affiché, sans rien ajouter.' : voiceState === 'device' ? 'Voix de synthèse de cet appareil. Elle lit le texte affiché, sans rien ajouter.' : ''}
+                            </span>
+                          )}
+                        </p>
                       )}
                       {ex.update && (
                         <div className="v-update">

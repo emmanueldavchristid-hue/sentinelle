@@ -7,9 +7,10 @@ Ce script correspond au parcours d'acceptation en 16 étapes du brief, rejoué a
 1. Double-clic sur `lancer-sentinelle.bat` (ou `pnpm install` puis `pnpm demo`), ouvrir http://localhost:3000 dans Chrome ou Edge.
 2. **Réinitialiser le jeu le jour de la démonstration** : « Changer de rôle » → « Préparation de la démonstration » → **Réinitialiser le scénario**. Les événements récents du jeu sont datés relativement à ce jour : réinitialisé la veille, « depuis hier » serait vide. Cette action efface les données de démonstration.
 3. Revenir à l'accueil : l'application s'ouvre sur « Mon élevage aujourd'hui » (éleveur de démonstration). Vérifier le registre : 8 animaux, 5 enregistrements depuis hier.
-4. Assistant IA : dans un terminal, `pnpm assistant:check` doit finir par « texte et appels de fonctions opérationnels ». Sinon, voir « Secours ».
-5. Pastille « Serveur joignable », case « Couper le réseau » décochée. Zoom du navigateur à 110 % en projection (1366 px).
-6. Ne jamais afficher le fichier `.env` ni le terminal de démarrage à l'écran partagé (la clé n'y est pas écrite, mais autant ne pas montrer de configuration).
+4. Son : régler le volume du PC ; les réponses sont dites à voix haute par défaut (bouton « Réponses à voix haute » pour couper).
+5. Assistant IA : dans un terminal, `pnpm assistant:check` doit finir par « texte et appels de fonctions opérationnels ». Sinon, voir « Secours ».
+6. Pastille « Serveur joignable », case « Couper le réseau » décochée. Zoom du navigateur à 110 % en projection (1366 px).
+7. Ne jamais afficher le fichier `.env` ni le terminal de démarrage à l'écran partagé (la clé n'y est pas écrite, mais autant ne pas montrer de configuration).
 
 ## Script
 | Temps | À faire | À dire |
@@ -42,7 +43,7 @@ Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier
 
 ## Limites à annoncer
 - Données synthétiques ; aucune intégration réelle ; aucun capteur posé sur un animal. La seule mesure automatique est la balise de démonstration (un téléphone), relue toutes les 4 secondes.
-- Voix : dictée d'une phrase (transcrite puis relue), pas de conversation parlée en direct. Pas de lots (volailles), pas de recherche documentaire dans cette version.
+- Voix : dictée d'une phrase (transcrite puis relue) et réponses dites par une voix de synthèse, pas de conversation parlée en continu. Couper « Réponses à voix haute » si la salle est bruyante ou si le son gêne. Pas de lots (volailles), pas de recherche documentaire dans cette version.
 - Sélecteur de rôle = mode démonstration, pas une authentification.
 - L'assistant ne voit que ce qui est enregistré. Une absence d'observation n'est pas un bon état de santé.
 - Sur le palier gratuit de Google, le contenu envoyé au modèle peut servir à améliorer ses produits : acceptable avec des données synthétiques, à revoir avant toute donnée réelle.

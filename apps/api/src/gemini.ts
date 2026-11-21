@@ -36,6 +36,26 @@ export interface AssistantModel {
   runWithTools(input: ToolLoopInput): Promise<ToolLoopOutput>;
   /** Transcription d'un court enregistrement (dictée). L'audio est transmis au fournisseur, jamais stocké par ce serveur. */
   transcribe?(input: { audioBase64: string; mimeType: string; signal: AbortSignal }): Promise<string>;
+  /** Réponse parlée : synthèse vocale du texte fourni, rendue en WAV. C'est une voix de synthèse, toujours présentée comme telle. */
+  speak?(input: { text: string; signal: AbortSignal }): Promise<Buffer>;
+}
+
+/** Enveloppe WAV autour d'échantillons PCM 16 bits mono. */
+export function pcmToWav(pcm: Buffer, rate: number): Buffer {
+  const h = Buffer.alloc(44);
+  h.write('RIFF', 0, 'ascii');
+  h.writeUInt32LE(36 + pcm.length, 4);
+  h.write('WAVEfmt ', 8, 'ascii');
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20);
+  h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24);
+  h.writeUInt32LE(rate * 2, 28);
+  h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34);
+  h.write('data', 36, 'ascii');
+  h.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([h, pcm]);
 }
 
 const TRANSCRIBE_PROMPT =
@@ -131,7 +151,7 @@ export async function listGeminiModels(opts: { apiKey: string; baseUrl?: string;
   return out;
 }
 
-export function geminiModel(opts: { apiKey: string; model: string; fallbackModel?: string; baseUrl?: string }): AssistantModel {
+export function geminiModel(opts: { apiKey: string; model: string; fallbackModel?: string; ttsModel?: string; ttsVoice?: string; baseUrl?: string }): AssistantModel {
   const base = (opts.baseUrl || DEFAULT_BASE).replace(/\/+$/, '');
   const urlOf = (m: string) => `${base}/v1beta/models/${encodeURIComponent(m)}:generateContent`;
   return {
@@ -154,6 +174,28 @@ export function geminiModel(opts: { apiKey: string; model: string; fallbackModel
         .join('')
         .trim();
     },
+    // Synthèse vocale : seulement si un modèle vocal est configuré (GEMINI_TTS_MODEL).
+    // Constat réel du 21/11 : une consigne placée devant le texte est LUE à voix haute. On n'envoie donc que le texte à dire.
+    ...(opts.ttsModel
+      ? {
+          async speak({ text, signal }: { text: string; signal: AbortSignal }) {
+            type Res = { candidates?: { content?: { parts?: { inlineData?: { mimeType?: string; data?: string } }[] } }[]; promptFeedback?: { blockReason?: string } };
+            const res = await request<Res>(urlOf(opts.ttsModel!), opts.apiKey, {
+              method: 'POST',
+              signal,
+              body: { contents: [{ role: 'user', parts: [{ text }] }], generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: opts.ttsVoice || 'Kore' } } } } },
+            });
+            if (res.promptFeedback?.blockReason) throw new GeminiError(200, 'BLOCKED', 'Gemini a bloqué ce texte.');
+            const part = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
+            const audio = Buffer.from(part?.data ?? '', 'base64');
+            if (audio.length < 100) throw new GeminiError(200, 'EMPTY', 'Gemini n’a renvoyé aucun son.');
+            const mime = part?.mimeType ?? '';
+            // Selon le modèle : un fichier WAV complet, ou des échantillons bruts (audio/L16;rate=24000) à envelopper.
+            if (audio.toString('ascii', 0, 4) === 'RIFF') return audio;
+            return pcmToWav(audio, Number(/rate=(\d+)/.exec(mime)?.[1] ?? 24_000));
+          },
+        }
+      : {}),
     async runWithTools(input) {
       // Modèle surchargé (503, constaté le 21/11/2026 sur plusieurs modèles) : bascule sur le modèle de secours pour le reste de l'échange.
       let url = urlOf(opts.model);

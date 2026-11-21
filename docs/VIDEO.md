@@ -238,7 +238,7 @@ Si le temps manque : livrer d'abord le livrable A complet, puis un motion design
 - Pas de montage cachant un appel qui échoue, pas de réponse réécrite, pas de capture retouchée.
 - Pas de maquette présentée comme une application opérationnelle.
 - Aucune génération payante sans accord de Yvan.
-- Ne pas montrer ni suggérer ce qui n'existe pas : conversation vocale en direct (seule la dictée d'une phrase existe depuis le 21/11), capteurs ou objets connectés en service, lots de volailles, recherche documentaire, application mobile native.
+- Ne pas montrer ni suggérer ce qui n'existe pas : conversation vocale en continu (existent depuis le 21/11 : la dictée d'une phrase et les réponses dites par une voix de synthèse), capteurs ou objets connectés en service, lots de volailles, recherche documentaire, application mobile native.
 - Ne pas présenter la scène 6 comme une fonction disponible : ses mentions restent à l'écran pendant toute la scène.
 - Ne pas retirer le bandeau « Démonstrateur · données entièrement synthétiques » des captures.
 - Ne pas demander à un générateur de créer des textes d'interface, ni utiliser un logo réel.

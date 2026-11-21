@@ -235,7 +235,7 @@ export interface AssistantStatus {
   /** Pourquoi l'assistant IA n'est pas disponible, en clair. */
   reason: string | null;
   /** Dictée : le serveur peut-il transcrire un enregistrement, et quelle durée maximale accepte-t-il ? */
-  voice?: { available: boolean; maxSeconds: number };
+  voice?: { available: boolean; maxSeconds: number; /** Le serveur sait-il produire une réponse parlée (synthèse vocale) ? */ speech?: boolean };
 }
 
 /** Résultat d'une dictée : le texte transcrit, à vérifier par l'utilisateur avant envoi. L'audio n'est pas conservé. */

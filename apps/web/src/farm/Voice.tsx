@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranscriptionReply } from '@sentinelle/contracts';
-import { api, ApiFailure, NetworkError, type Session } from '../api';
+import { api, ApiFailure, isSimulatedOffline, NetworkError, type Session } from '../api';
 
 /**
  * Dictée : un enregistrement court, déclenché et arrêté par l'utilisateur, transcrit par le serveur puis jeté.
@@ -233,3 +233,101 @@ export function speak(text: string, onEnd: () => void) {
   window.speechSynthesis.speak(u);
 }
 export const stopSpeaking = () => canSpeak() && window.speechSynthesis.cancel();
+
+// ---------- Réponses parlées : voix de synthèse du serveur (Gemini), sinon voix de synthèse de l'appareil ----------
+
+/**
+ * Pour une personne qui ne lit pas, la réponse doit pouvoir s'écouter. Le texte lu est celui affiché à l'écran : la voix
+ * n'ajoute aucun fait. C'est toujours une voix de synthèse, annoncée comme telle.
+ * - Voix du serveur : le texte est envoyé au serveur, qui le fait dire par le modèle de synthèse configuré (rien n'est conservé).
+ * - Repli : la voix de synthèse de l'appareil (hors connexion, service indisponible, pas de modèle vocal configuré).
+ */
+export type VoiceVia = 'server' | 'device';
+const PREF_KEY = 'sentinelle.reponsesVocales';
+export const voiceRepliesPref = {
+  get: () => {
+    try {
+      return localStorage.getItem(PREF_KEY) !== 'non';
+    } catch {
+      return true;
+    }
+  },
+  set: (on: boolean) => {
+    try {
+      localStorage.setItem(PREF_KEY, on ? 'oui' : 'non');
+    } catch {
+      /* préférence valable pour cette page seulement */
+    }
+  },
+};
+
+const cache = new Map<string, string>(); // texte -> adresse locale du son déjà produit (réécoute sans nouvel appel)
+let player: HTMLAudioElement | null = null;
+let generation = 0;
+
+export function stopSpeech() {
+  generation++;
+  if (player) {
+    player.pause();
+    player = null;
+  }
+  stopSpeaking();
+}
+
+async function serverAudio(text: string, session: Session | null): Promise<string | null> {
+  const hit = cache.get(text);
+  if (hit) return hit;
+  if (isSimulatedOffline()) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20_000);
+  try {
+    const res = await fetch('/api/assistant/speak', { method: 'POST', signal: ctrl.signal, headers: { 'content-type': 'application/json', ...(session ? { 'x-demo-user': session.userId } : {}) }, body: JSON.stringify({ text }) });
+    if (!res.ok || !(res.headers.get('content-type') ?? '').includes('audio')) return null;
+    const url = URL.createObjectURL(await res.blob());
+    if (cache.size >= 20) {
+      const [k, v] = cache.entries().next().value as [string, string];
+      URL.revokeObjectURL(v);
+      cache.delete(k);
+    }
+    cache.set(text, url);
+    return url;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Dit un texte. `onState` reçoit « loading » (la voix se prépare), puis la voix utilisée, puis null à la fin.
+ * Si le navigateur refuse de jouer un son sans geste de l'utilisateur, la lecture s'arrête simplement : le bouton
+ * « Écouter » reste disponible.
+ */
+export async function playSpeech(text: string, opts: { session: Session | null; server: boolean; onState: (s: 'loading' | VoiceVia | null) => void }) {
+  stopSpeech();
+  const mine = generation;
+  const said = text.slice(0, 900);
+  if (!said.trim()) return opts.onState(null);
+  const end = () => mine === generation && opts.onState(null);
+  if (opts.server) {
+    opts.onState('loading');
+    const url = await serverAudio(said, opts.session);
+    if (mine !== generation) return;
+    if (url) {
+      const a = new Audio(url);
+      player = a;
+      a.onended = end;
+      a.onerror = end;
+      try {
+        await a.play();
+        if (mine === generation) opts.onState('server');
+        return;
+      } catch {
+        player = null; // lecture refusée par le navigateur : on tente la voix de l'appareil
+      }
+    }
+  }
+  if (!canSpeak() || mine !== generation) return end();
+  opts.onState('device');
+  speak(said, end);
+}

@@ -32,7 +32,7 @@ export default defineConfig({
         permissions: ['microphone'],
         launchOptions: {
           ...(executablePath ? { executablePath } : {}),
-          args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-b017.wav')}`, ...(executablePath ? ['--no-sandbox'] : [])],
+          args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-b017.wav')}`, ...(executablePath ? ['--no-sandbox'] : [])],
         },
         ...(executablePath ? { channel: undefined } : {}),
       },

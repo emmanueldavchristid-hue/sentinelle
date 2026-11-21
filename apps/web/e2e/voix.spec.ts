@@ -36,7 +36,14 @@ test('dictée : micro signalé, transcription relue, puis brouillon d’observat
   await expect(talk.getByText('Microphone actif.')).toHaveCount(0);
 
   // Le texte dicté suit exactement le parcours du texte tapé : brouillon, jamais d'enregistrement direct.
+  // La réponse est aussi dite : le serveur renvoie un vrai son (synthèse vocale), annoncé comme une voix de synthèse.
+  const speech = page.waitForResponse((r) => r.url().endsWith('/api/assistant/speak'), { timeout: 90_000 });
   await page.getByRole('button', { name: 'Demander' }).click();
+  const sound = await speech;
+  expect(sound.status()).toBe(200);
+  expect(sound.headers()['content-type']).toContain('audio/wav');
+  expect(Number(sound.headers()['content-length'])).toBeGreaterThan(20_000);
+  await expect(talk.getByText('Voix de synthèse (Gemini). Elle lit le texte affiché, sans rien ajouter.')).toBeVisible({ timeout: 30_000 });
   const draft = talk.getByRole('form', { name: 'Vérifiez, puis confirmez' });
   await expect(draft).toBeVisible({ timeout: 60_000 });
   await expect(draft.getByLabel('Animal')).toHaveValue('B-017');

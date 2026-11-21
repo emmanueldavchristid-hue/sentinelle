@@ -27,6 +27,15 @@ test('boucle de preuve vivante : question, sources, fiche, brouillon, confirmati
   // Sans assistant IA, la dictée est annoncée indisponible (pas de bouton factice) et le texte reste l'accès complet.
   await expect(talk.getByRole('button', { name: 'Dicter' })).toBeDisabled();
   await expect(talk).toContainText('Dictée indisponible : la transcription passe par l’assistant IA');
+  // Réponses à voix haute : activées par défaut (voix de synthèse de l'appareil quand le serveur n'en fournit pas), et coupables.
+  const voiceToggle = talk.getByRole('button', { name: /Réponses à voix haute/ });
+  await expect(voiceToggle).toHaveText('Réponses à voix haute : oui');
+  await expect(talk).toContainText('Chaque réponse est aussi dite par la voix de synthèse de cet appareil.');
+  await voiceToggle.click();
+  await expect(voiceToggle).toHaveText('Réponses à voix haute : non');
+  await page.reload();
+  await expect(talk.getByRole('button', { name: /Réponses à voix haute/ })).toHaveText('Réponses à voix haute : non'); // préférence conservée
+  await talk.getByRole('button', { name: /Réponses à voix haute/ }).click();
   expect(await countSinceYesterday()).toBe(5);
 
   // 2 à 4. « Qu'est-ce qui a changé depuis hier ? » : lecture des événements réels, réponse avec sources.

@@ -221,7 +221,9 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
   const used = new Map<string, number>();
 
   const voiceMaxSeconds = opts.voiceMaxSeconds ?? 30;
-  const voice = () => ({ available: !!opts.model?.transcribe, maxSeconds: voiceMaxSeconds });
+  const voice = () => ({ available: !!opts.model?.transcribe, maxSeconds: voiceMaxSeconds, speech: !!opts.model?.speak });
+  /** Compteur des réponses parlées par utilisateur (limite de consommation, distincte des questions). */
+  const spoken = new Map<string, number>();
   const status = (): AssistantStatus =>
     opts.model
       ? { configured: true, provider: opts.model.provider, model: opts.model.model, reason: null, voice: voice() }
@@ -252,6 +254,33 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
     } catch (e) {
       await ctx.audit(ctx.db, u, 'ASSISTANT_TRANSCRIBE_FAILED', 'assistant', model.model, { code: e instanceof GeminiError ? e.code : 'ERROR' });
       throw new HttpError(502, 'VOICE_FAILED', `${e instanceof GeminiError ? e.message : 'La transcription a échoué.'} Utilisez le texte.`);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  /**
+   * Réponse parlée : le texte d'une réponse déjà affichée est rendu en son par le modèle de synthèse vocale configuré.
+   * Rien n'est stocké ni journalisé (ni le texte, ni le son). Le texte est celui que l'écran montre : la voix n'ajoute aucun fait.
+   */
+  ctx.app.post('/api/assistant/speak', async (req, reply) => {
+    const u = await ctx.currentUser(req);
+    const model = opts.model;
+    if (!model?.speak) throw new HttpError(503, 'SPEECH_DISABLED', 'Réponse parlée indisponible sur ce serveur : la voix de synthèse de l’appareil prend le relais si elle existe.');
+    const body = parse(z.object({ text: z.string().trim().min(2, 'Texte vide').max(900, 'Texte limité à 900 caractères') }), req.body);
+    const n = spoken.get(u.id) ?? 0;
+    if (n >= maxRequests * 4) throw new HttpError(429, 'AI_QUOTA', 'Limite de réponses parlées atteinte pour cette session.');
+    spoken.set(u.id, n + 1);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const t0 = Date.now();
+    try {
+      const audio = await model.speak({ text: body.text, signal: ac.signal });
+      await ctx.audit(ctx.db, u, 'ASSISTANT_SPEAK', 'assistant', model.model, { chars: body.text.length, ms: Date.now() - t0 });
+      return reply.header('Cache-Control', 'no-store').type('audio/wav').send(audio);
+    } catch (e) {
+      await ctx.audit(ctx.db, u, 'ASSISTANT_SPEAK_FAILED', 'assistant', model.model, { code: e instanceof GeminiError ? e.code : 'ERROR' });
+      throw new HttpError(502, 'SPEECH_FAILED', e instanceof GeminiError ? e.message : 'La synthèse vocale a échoué.');
     } finally {
       clearTimeout(timer);
     }

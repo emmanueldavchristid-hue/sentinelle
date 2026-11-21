@@ -34,7 +34,7 @@ try {
   }
   if (!usable.some((m) => m.name === config.geminiModel)) say(`   Attention : GEMINI_MODEL=${config.geminiModel} n’est pas dans cette liste.`);
 
-  const model = geminiModel({ apiKey: config.geminiApiKey, model: config.geminiModel, fallbackModel: config.geminiFallbackModel || undefined });
+  const model = geminiModel({ apiKey: config.geminiApiKey, model: config.geminiModel, fallbackModel: config.geminiFallbackModel || undefined, ttsModel: config.geminiTtsModel || undefined, ttsVoice: config.geminiTtsVoice });
   if (config.geminiFallbackModel) say(`\n   Modèle de secours en cas de surcharge (503) : ${config.geminiFallbackModel}`);
   say(`\n2. Appel minimal sur ${config.geminiModel} :`);
   const hello = await model.runWithTools({ system: 'Réponds par le seul mot OK.', history: [], user: 'Test de connexion.', tools: [], callTool: async () => ({}), maxRounds: 0, signal: ac.signal }).catch((e) => fail('appel minimal', e));
@@ -57,6 +57,13 @@ try {
     })
     .catch((e) => fail('appel de fonction', e));
   say(called ? `   Fonction appelée par le modèle, réponse finale reçue (${fn.text.length} caractères) : opérationnel.` : '   Le modèle a répondu SANS appeler la fonction : appels d’outils non confirmés avec ce modèle. Essayez un autre modèle.');
+  say('\n4. Réponse parlée (synthèse vocale) :');
+  if (!model.speak) say('   GEMINI_TTS_MODEL n’est pas renseigné : les réponses seront lues par la voix de synthèse de l’appareil.');
+  else {
+    const t0 = Date.now();
+    const audio = await model.speak({ text: 'Cinq enregistrements ont été reçus depuis hier.', signal: ac.signal }).catch((e) => fail('synthèse vocale', e));
+    say(`   Son reçu (${Math.round(audio.length / 1024)} Ko en ${Date.now() - t0} ms, modèle ${config.geminiTtsModel}) : opérationnel. Le contenu n’est pas écouté par cette commande.`);
+  }
   say(`\nRésultat : texte ${called ? 'et appels de fonctions opérationnels' : 'opérationnel, appels de fonctions NON confirmés'}. Voix (API Live) : non testée par cette commande.`);
   process.exit(called ? 0 : 1);
 } finally {
