@@ -23,3 +23,21 @@ Toutes ≥ 4,5:1 pour le texte. Ce n’est **pas** un audit WCAG complet.
 - Cibles des actions principales : 44 px minimum ; focus visible (contour bleu 3 px).
 - Animations : surlignage du changement après relance ; aucune animation simulant un calcul ; `prefers-reduced-motion` respecté.
 - Mention « données synthétiques » et « mode démonstration » sur chaque écran.
+
+# Design : SENTINELLE VIVANT (21/11)
+
+Écran « Mon élevage aujourd'hui ». Les écrans existants gardent leurs tokens ; les nouveaux styles sont préfixés `.v-` dans `apps/web/src/styles.css`.
+
+## Direction
+- **Référence** : un registre d'élevage (papier ivoire, filets, chiffres en sérif) et, seul panneau sombre de l'application, une carte de constellation vert nuit.
+- **Typographie** : Fraunces (titres et chiffres, licence OFL 1.1, servie en local par `@fontsource-variable/fraunces`, aucun appel externe) ; texte en pile système. Corps de l'écran : 16 px ; aucun texte utile sous 12,5 px ; libellés du schéma de 12 px rendus ou plus à 1366 px.
+- **Palette nommée par le sujet** : ivoire du registre `#f5f0e3`, papier `#fffdf8`, encre `#1c2421`, filet `#d8d0bc`, vert nuit `#0e2b27` (constellation), vert pâturage `#1c5a48` (actions), ocre latérite `#9a4f12` sur clair et lueur `#f2b24a` sur fond nuit (un seul accent : ce qui est nouveau ou sélectionné).
+- **Mise en page** : axe gauche tenu, deux colonnes 7/5 (représentation à gauche, conversation à droite), pas de titre centré. La situation tient en une ligne de registre réglée, pas en quatre cartes. Rayons par rôle : 3 à 4 px pour les blocs, 6 px pour la saisie, 999 px pour les pastilles.
+
+## Règles tenues
+- Cinq natures d'information, toujours par un libellé et un signe, jamais par la seule couleur : ■ fait enregistré, ∑ résultat calculé, ¶ contenu documentaire, ∅ donnée absente, → suggestion. Le filet de gauche change aussi de style (plein, double, tirets, pointillés).
+- Constellation : un trait est un déplacement enregistré ; le chiffre dans un site est le nombre d'animaux avec une présence ouverte ; la seule pulsation signale un enregistrement que l'utilisateur vient de confirmer. Aucune animation ne suggère un capteur. Vue « Liste » équivalente, seule vue sous 640 px.
+- Trois dates toujours distinguées : date de l'événement, saisie sur l'appareil, réception par le serveur.
+- États : chargement (squelettes à la forme du contenu), vide (dit sans conclure sur l'état des animaux), erreur avec « Réessayer », hors connexion (données locales datées), données anciennes.
+- `prefers-reduced-motion` respecté ; focus visible ; cibles de 44 px pour les actions principales.
+- Contrastes des nouvelles paires : non mesurés à ce jour (à faire avec la même méthode que le tableau ci-dessus).

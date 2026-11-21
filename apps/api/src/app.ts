@@ -574,6 +574,8 @@ export async function buildApp(opts: AppOptions) {
     await app.register(fastifyStatic, { root: opts.webDist, wildcard: false });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/')) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Route inconnue' });
+      // Un fichier absent (script d’une ancienne compilation, image) est une vraie erreur 404 : jamais la page HTML à sa place.
+      if (req.url.startsWith('/assets/') || /\.[a-z0-9]{2,5}(\?.*)?$/i.test(req.url)) return reply.status(404).type('text/plain; charset=utf-8').send('Fichier introuvable');
       return reply.type('text/html').sendFile('index.html');
     });
   }

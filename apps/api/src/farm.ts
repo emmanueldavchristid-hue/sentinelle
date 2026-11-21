@@ -44,6 +44,8 @@ const json = <T>(v: unknown): T => (typeof v === 'string' ? JSON.parse(v) : v) a
 const iso = (v: unknown): string => (v instanceof Date ? v : new Date(String(v))).toISOString();
 const isoOrNull = (v: unknown): string | null => (v === null || v === undefined ? null : iso(v));
 const fmt = (isoStr: string) => formatInstant(Date.parse(isoStr));
+/** Instant à la seconde : deux états des données lus dans la même minute doivent rester distinguables. */
+const fmtSec = (isoStr: string) => `${formatInstant(Date.parse(isoStr))}:${isoStr.slice(17, 19)}`;
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 const isUuid = (s: string) => z.uuid().safeParse(s).success;
 
@@ -87,9 +89,10 @@ async function currentRecords(q: Queryable, orgId: string, animalIds?: string[])
 const siteName = (sites: Map<string, SiteRow>, id: string | null | undefined) => (id ? (sites.get(id)?.name ?? id) : 'lieu non enregistré');
 
 function describeRecord(r: Rec, sites: Map<string, SiteRow>): string {
-  return r.kind === 'presence'
-    ? `du ${formatTemporal(r.start)} au ${r.end === null ? 'présent (fin non enregistrée)' : formatTemporal(r.end)}`
-    : `départ ${formatTemporal(r.departure)}, arrivée ${formatTemporal(r.arrival)}`;
+  if (r.kind === 'movement') return `départ ${formatTemporal(r.departure)}, arrivée ${formatTemporal(r.arrival)}`;
+  const start = r.start.precision === 'UNKNOWN' ? 'début non enregistré' : `depuis ${formatTemporal(r.start)}`;
+  if (r.end === null) return `${start}, présence ouverte (fin non enregistrée)`;
+  return r.start.precision === 'UNKNOWN' ? `${start}, fin ${formatTemporal(r.end)}` : `du ${formatTemporal(r.start)} au ${formatTemporal(r.end)}`;
 }
 
 function movementInconsistent(m: Movement): boolean {
@@ -450,7 +453,7 @@ export function farmTools(db: Db) {
     const LIMIT = 200;
     const r = await eventsBetween(db, u.org_id, sites, { from, to, limit: LIMIT });
     const sinceYesterday = !p.from;
-    const head = sinceYesterday ? `Depuis hier (${fmt(from)})` : `Entre le ${fmt(from)} et le ${fmt(to)}`;
+    const head = sinceYesterday ? `Depuis hier (${fmt(from)})` : `Entre le ${fmtSec(from)} et le ${fmtSec(to)}`;
     const statements: Statement[] = r.counts.total
       ? [
           { nature: 'COMPUTED', text: `${head}, ${plural(r.counts.total, 'enregistrement a été reçu', 'enregistrements ont été reçus')} par le serveur : ${countsText(r.counts)}.`, sources: [] },
@@ -678,7 +681,7 @@ export function farmTools(db: Db) {
 
   async function prepareObservation(u: User, raw: unknown): Promise<ToolResult<ObservationDraftData>> {
     const p = parse(PrepareObservationSchema, raw);
-    if (!p.text && !p.animalId && !p.note) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { text: 'Décrivez l’observation, ou indiquez un animal' } });
+    // Sans aucun paramètre : brouillon vide pour la saisie manuelle (tous les champs sont « à compléter »).
     const asOf = await dbNow(db);
     const sites = await loadSites(db, u.org_id);
     const text = p.text ?? '';

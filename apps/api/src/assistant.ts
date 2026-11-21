@@ -100,7 +100,8 @@ export async function answerDirect(tools: FarmTools, u: User, input: AskInput): 
 const SYSTEM_PROMPT = `Tu es l'assistant de SENTINELLE VIVANT. Tu aides un éleveur à comprendre la situation ENREGISTRÉE de son exploitation.
 Règles non négociables :
 - Tu n'affirmes un fait sur l'exploitation que s'il figure dans le résultat d'une fonction appelée pendant cet échange. Appelle une fonction avant de répondre à toute question sur l'exploitation.
-- Tu cites les identifiants de source tels quels, entre crochets, par exemple [OBS:…] ou [REC:P8@2]. N'invente aucun identifiant.
+- Tu cites les identifiants de source tels quels, entre crochets, par exemple [REC:P8@2], uniquement s'ils figurent dans un résultat de fonction de cet échange. N'invente aucun identifiant et ne mets rien d'autre entre crochets.
+- Si la question porte sur un élément précis (une observation, un animal, un enregistrement), relis-le d'abord avec get_source, get_animal ou list_changes, même s'il a déjà été évoqué.
 - Tu distingues : fait enregistré, résultat calculé, donnée absente, suggestion. Une absence d'observation n'est jamais un bon état de santé.
 - Aucun diagnostic, aucune prescription, aucune cause biologique, aucune prédiction, aucun score. Tu ne remplaces ni l'observation du terrain ni le professionnel de santé animale.
 - Tu n'enregistres rien. Pour une nouvelle observation, appelle prepare_observation : un brouillon s'affiche et l'utilisateur confirme lui-même à l'écran. Ne dis jamais qu'une observation est enregistrée.
@@ -250,9 +251,13 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
       });
       // Contrôle des citations : un identifiant cité doit venir d'un résultat de fonction de cet échange.
       const known = new Set(results.flatMap((r) => [...r.sources.map((s) => s.ref), ...r.statements.flatMap((s) => s.sources)]));
+      // Le modèle recopie parfois le nom d'une nature entre crochets : ce n'est pas une source, on le retire.
+      out.text = out.text.replace(/\s*\[(?:FACT|COMPUTED|MISSING|SUGGESTION|DOCUMENT)\]/g, '');
       const cited = [...out.text.matchAll(/\b(?:OBS|REC|TASK|ANIMAL|SITE):[A-Za-z0-9@-]+/g)].map((m) => m[0]);
-      const unknown = cited.filter((c) => !known.has(c));
-      await ctx.audit(ctx.db, u, 'ASSISTANT_AI', 'assistant', model.model, { tools: out.calls.map((c) => c.name), chars: input.text.length, unknownCitations: unknown.length });
+      // « REC:P3 » sans numéro de révision est accepté si « REC:P3@n » a bien été lu ; tout autre identifiant inconnu est une invention.
+      const isKnown = (c: string) => known.has(c) || (!c.includes('@') && [...known].some((k) => k.startsWith(`${c}@`)));
+      const unknown = cited.filter((c) => !isKnown(c));
+      await ctx.audit(ctx.db, u, 'ASSISTANT_AI', 'assistant', model.model, { tools: out.calls.map((c) => c.name), chars: input.text.length, unknownCitations: unknown });
       if (unknown.length) return fallback('La réponse de l’IA citait une source absente des données consultées : elle a été écartée.');
       const ungrounded = results.length === 0;
       return {
@@ -263,7 +268,8 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
         notice: ungrounded
           ? 'Texte formulé par l’IA sans lecture des données de l’exploitation : à prendre comme une suggestion, pas comme un fait.'
           : `Texte formulé par l’IA à partir de ${results.length > 1 ? `${results.length} lectures` : 'la lecture'} ci-dessous. Les faits et les sources viennent des données, pas du modèle.`,
-        results,
+        // La lecture la plus précise (la dernière) est présentée en premier : c'est elle qui pilote l'écran.
+        results: [...results].reverse(),
         ungrounded,
         suggestions: SUGGESTIONS,
       };

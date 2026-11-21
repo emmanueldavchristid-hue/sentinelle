@@ -50,6 +50,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@fontsource-variable/fraunces':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@sentinelle/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -321,6 +324,9 @@ packages:
 
   '@fastify/static@10.1.11':
     resolution: {integrity: sha512-WjEpDqkzOziIipghh4ki3ZNfLCmI1kRWlYKar3+9FiuY2LzoeogKiDqxIH68r6vYUSxvUzyEiV1BOP0yfW+glQ==}
+
+  '@fontsource-variable/fraunces@5.3.0':
+    resolution: {integrity: sha512-9BYGySn4AHEJdgp9Z28tQ3X+laJMEOITXkQarZXeloWQZDq5oOvXJ3kDA8c7MGIfpogIaZfjrQBqmda8POOCKA==}
 
   '@isaacs/nonrecursive-glob-match@1.1.0':
     resolution: {integrity: sha512-GPm/Dbvk5RLmhRnxXIa7nTpK0xtl4E0wj0MslsuNiJ1FIROU+2+9lgUC/dgF7Ey4QCWhfEsgxilMRMCdHPfDfw==}
@@ -1437,6 +1443,8 @@ snapshots:
       fastify-plugin: 6.0.1
       fastq: 1.20.3
       glob: 14.0.6
+
+  '@fontsource-variable/fraunces@5.3.0': {}
 
   '@isaacs/nonrecursive-glob-match@1.1.0': {}
 

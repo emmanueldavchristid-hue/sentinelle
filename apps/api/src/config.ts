@@ -45,6 +45,10 @@ export const config = {
   /** Une seule des deux variables doit exister : les outils Google donnent la priorité à GOOGLE_API_KEY. */
   googleApiKeyAlsoSet: !!process.env.GOOGLE_API_KEY,
   geminiModel: (process.env.GEMINI_MODEL ?? '').trim(),
+  /** ASSISTANT_AI=off : coupe l'assistant IA sans retirer la clé (secours de démonstration, lecture directe des données). */
+  assistantOff: (process.env.ASSISTANT_AI ?? '').trim().toLowerCase() === 'off',
+  /** Modèle de secours si le modèle principal est surchargé (503). Facultatif. */
+  geminiFallbackModel: (process.env.GEMINI_FALLBACK_MODEL ?? '').trim(),
   geminiLiveModel: (process.env.GEMINI_LIVE_MODEL ?? '').trim(),
   assistantTimeoutMs: int(process.env.ASSISTANT_TIMEOUT_MS, 20_000, 2_000, 120_000),
   assistantMaxRequestsPerSession: int(process.env.ASSISTANT_MAX_REQUESTS_PER_SESSION, 40, 1, 1000),
@@ -60,8 +64,9 @@ export interface AssistantConfigReport {
 }
 
 /** Validation de la configuration de l'assistant au démarrage. Ne renvoie ni n'affiche jamais la valeur d'une clé. */
-export function checkAssistantConfig(c: Pick<typeof config, 'geminiApiKey' | 'googleApiKeyAlsoSet' | 'geminiModel'> = config): AssistantConfigReport {
+export function checkAssistantConfig(c: Pick<typeof config, 'geminiApiKey' | 'googleApiKeyAlsoSet' | 'geminiModel'> & { assistantOff?: boolean } = config): AssistantConfigReport {
   const messages: string[] = [];
+  if (c.assistantOff) return { ready: false, messages: ['Assistant IA coupé par ASSISTANT_AI=off : lecture directe des données et saisie manuelle uniquement.'] };
   if (!c.geminiApiKey) {
     messages.push(`GEMINI_API_KEY absente : l’assistant IA est désactivé. L’application reste entièrement utilisable (lecture directe des données et saisie manuelle).`);
     messages.push(`Pour l’activer : créez la clé dans Google AI Studio, puis écrivez GEMINI_API_KEY=… dans ${envFile} (fichier local, exclu de Git). Ne la collez nulle part ailleurs.`);

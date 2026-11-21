@@ -70,7 +70,18 @@ function describeError(status: number, apiStatus: string | undefined): GeminiErr
   return new GeminiError(status, apiStatus ?? 'ERROR', `Erreur Gemini (${status}).`);
 }
 
+/** Une surcharge passagère du service (503) est retentée une fois, après une courte attente. Rien d'autre n'est retenté. */
 async function request<T>(url: string, apiKey: string, init: { method: 'GET' | 'POST'; body?: unknown; signal?: AbortSignal }): Promise<T> {
+  try {
+    return await requestOnce<T>(url, apiKey, init);
+  } catch (e) {
+    if (!(e instanceof GeminiError) || e.status !== 503 || init.signal?.aborted) throw e;
+    await new Promise((r) => setTimeout(r, 1500));
+    return requestOnce<T>(url, apiKey, init);
+  }
+}
+
+async function requestOnce<T>(url: string, apiKey: string, init: { method: 'GET' | 'POST'; body?: unknown; signal?: AbortSignal }): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -113,26 +124,35 @@ export async function listGeminiModels(opts: { apiKey: string; baseUrl?: string;
   return out;
 }
 
-export function geminiModel(opts: { apiKey: string; model: string; baseUrl?: string }): AssistantModel {
+export function geminiModel(opts: { apiKey: string; model: string; fallbackModel?: string; baseUrl?: string }): AssistantModel {
   const base = (opts.baseUrl || DEFAULT_BASE).replace(/\/+$/, '');
-  const url = `${base}/v1beta/models/${encodeURIComponent(opts.model)}:generateContent`;
+  const urlOf = (m: string) => `${base}/v1beta/models/${encodeURIComponent(m)}:generateContent`;
   return {
     provider: 'Gemini',
     model: opts.model,
     async runWithTools(input) {
+      // Modèle surchargé (503, constaté le 21/11/2026 sur plusieurs modèles) : bascule sur le modèle de secours pour le reste de l'échange.
+      let url = urlOf(opts.model);
+      const post = async <T>(body: unknown): Promise<T> => {
+        try {
+          return await request<T>(url, opts.apiKey, { method: 'POST', signal: input.signal, body });
+        } catch (e) {
+          const fb = opts.fallbackModel;
+          if (!(e instanceof GeminiError) || e.status !== 503 || !fb || url === urlOf(fb) || input.signal.aborted) throw e;
+          url = urlOf(fb);
+          return request<T>(url, opts.apiKey, { method: 'POST', signal: input.signal, body });
+        }
+      };
       const contents: Content[] = [...input.history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })), { role: 'user', parts: [{ text: input.user }] }];
       const calls: ToolLoopOutput['calls'] = [];
       for (let round = 0; round <= input.maxRounds; round++) {
         const lastRound = round === input.maxRounds;
-        const res = await request<{ candidates?: { content?: Content; finishReason?: string }[]; promptFeedback?: { blockReason?: string } }>(url, opts.apiKey, {
-          method: 'POST',
-          signal: input.signal,
-          body: {
+        const res = await post<{ candidates?: { content?: Content; finishReason?: string }[]; promptFeedback?: { blockReason?: string } }>({
+          ...{
             systemInstruction: { parts: [{ text: input.system }] },
             contents,
-            tools: [{ functionDeclarations: input.tools }],
             // Dernier tour : plus aucun appel d'outil, le modèle doit conclure avec ce qu'il a obtenu.
-            toolConfig: { functionCallingConfig: { mode: lastRound ? 'NONE' : 'AUTO' } },
+            ...(input.tools.length ? { tools: [{ functionDeclarations: input.tools }], toolConfig: { functionCallingConfig: { mode: lastRound ? 'NONE' : 'AUTO' } } } : {}),
             generationConfig: { maxOutputTokens: 1200 },
           },
         });

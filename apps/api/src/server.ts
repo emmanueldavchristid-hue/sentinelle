@@ -15,7 +15,7 @@ if (config.aiProvider && !llm) console.warn(`  AI_PROVIDER=${config.aiProvider} 
 const assistantCheck = checkAssistantConfig();
 const app = await buildApp({
   assistant: {
-    model: assistantCheck.ready ? geminiModel({ apiKey: config.geminiApiKey, model: config.geminiModel }) : null,
+    model: assistantCheck.ready ? geminiModel({ apiKey: config.geminiApiKey, model: config.geminiModel, fallbackModel: config.geminiFallbackModel || undefined }) : null,
     disabledReason: assistantCheck.ready ? null : (assistantCheck.messages[0] ?? null),
     timeoutMs: config.assistantTimeoutMs,
     maxRequestsPerSession: config.assistantMaxRequestsPerSession,

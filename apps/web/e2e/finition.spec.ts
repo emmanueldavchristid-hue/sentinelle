@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const reset = async (page: Page, withObservation: boolean) => expect((await page.request.post('/api/demo/reset', { headers: { 'x-sentinelle-demo': 'reset' }, data: { withObservation } })).ok()).toBeTruthy();
 async function role(page: Page, name: RegExp) {
-  await page.goto('/');
+  await page.goto('/#/roles');
   await page.getByRole('button', { name }).click();
 }
 async function switchRole(page: Page, name: RegExp) {
@@ -10,7 +10,7 @@ async function switchRole(page: Page, name: RegExp) {
   await page.getByRole('button', { name }).click();
 }
 async function openInvestigation(page: Page) {
-  await page.getByRole('button', { name: 'Examiner' }).click();
+  await page.getByRole('button', { name: 'Examiner' }).first().click();
   await page.getByRole('button', { name: /Ouvrir l’enquête/ }).click();
   await expect(page.getByRole('heading', { name: /Enquête · signalement sur B-017/ })).toBeVisible();
 }
@@ -45,7 +45,8 @@ test('vrai mode hors ligne (réseau coupé par le navigateur, service worker) : 
   await expect(page.getByRole('button', { name: /Serveur joignable/ })).toBeVisible();
   await page.getByRole('button', { name: /Transmettre \(1\)/ }).click();
   await expect(page.getByTestId('outbox-item')).toContainText('Reçu par le serveur');
-  const obs = await (await page.request.get('/api/observations', { headers: { 'x-demo-user': 'U-VET' } })).json();
+  // Le jeu vivant contient d'autres observations : on ne compte que celle saisie ici, sur B-017.
+  const obs = (await (await page.request.get('/api/observations', { headers: { 'x-demo-user': 'U-VET' } })).json()).filter((o: { animalId: string }) => o.animalId === 'B-017');
   expect(obs).toHaveLength(1);
   expect(obs[0].eventTime).toEqual({ precision: 'DAY', date: '2026-03-12' });
 });

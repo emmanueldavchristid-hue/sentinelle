@@ -34,7 +34,8 @@ try {
   }
   if (!usable.some((m) => m.name === config.geminiModel)) say(`   Attention : GEMINI_MODEL=${config.geminiModel} n’est pas dans cette liste.`);
 
-  const model = geminiModel({ apiKey: config.geminiApiKey, model: config.geminiModel });
+  const model = geminiModel({ apiKey: config.geminiApiKey, model: config.geminiModel, fallbackModel: config.geminiFallbackModel || undefined });
+  if (config.geminiFallbackModel) say(`\n   Modèle de secours en cas de surcharge (503) : ${config.geminiFallbackModel}`);
   say(`\n2. Appel minimal sur ${config.geminiModel} :`);
   const hello = await model.runWithTools({ system: 'Réponds par le seul mot OK.', history: [], user: 'Test de connexion.', tools: [], callTool: async () => ({}), maxRounds: 0, signal: ac.signal }).catch((e) => fail('appel minimal', e));
   say(`   Réponse reçue (${hello.text.length} caractères) : opérationnel.`);

@@ -1,36 +1,54 @@
-# État de reprise
+# État de reprise : SENTINELLE VIVANT
+
+Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : lire `CLAUDE.md`, ce fichier, puis `git status`.
 
 ## Dernier point de contrôle
-- Date et heure : 2026-11-17 ~06:15 (Africa/Abidjan)
-- Branche : feat/sentinelle-demo
-- Dernier commit pertinent : 9b9a192 (CI verte) puis ce point de reprise
+- Date : 2026-11-21 (Africa/Abidjan), session Claude Code sur le PC Windows de Yvan.
+- Branche : `sentinelle-vivant` (créée depuis `feat/sentinelle-demo`, qui garde la version du 20/11 avec ses correctifs commités : `da53611`).
+- Rien n'est poussé vers GitHub. Aucune fusion.
 
-## Objectif courant
-- Jalon : application terminée (D-17 à D-20). Fonctions gelées.
-- Critère de réussite suivant : vérification sur l'ordinateur Windows du porteur (docs/GUIDE.md § 2, docs/DEMO.md).
+## Audit du 21/11 (dépôt réel)
+| Constat | Détail |
+|---|---|
+| Fonctionne et réutilisé | Synchronisation idempotente des observations, révisions en ajout seul, tâches de vérification, outbox hors connexion (Dexie), rôles et isolation par organisation, moteur de mouvements et console d'enquête (inchangés, réservés au vétérinaire). |
+| Écart avec le brief | Le dépôt contient 5 animaux de référence (B-017), pas 5 000 : ceux de la recette venaient d'un import CSV dans `data/pglite` (base locale non versionnée, non touchée). |
+| Manquait | Aucun événement récent (jeu daté de mars 2026), pas de rôle éleveur, aucun fichier `.env` lu par le serveur, aucune fonction de lecture « exploitation ». |
+| Défaut trouvé en route | Une recompilation serveur allumé laissait un écran blanc : le serveur renvoyait la page HTML à la place d'un script absent, et le service worker la mettait en cache. Corrigé (404 réel, cache v2). |
 
-## Travail terminé
-- Démo P0 (moteur R-B1, terrain hors connexion, console d'enquête, corrections, comparaison).
-- Finition : mode authentifié, import CSV, corrections de mouvements, paramètres, historique, QR.
-- IA : client Anthropic ou compatible OpenAI (Ollama/LM Studio), aide à la saisie, synthèse déterministe + reformulation IA vérifiée et conservée.
-- Rapport d'enquête imprimable / PDF.
-- Exploitation : sauvegarde/restauration, gestion des comptes, Dockerfile, CI GitHub Actions.
-- Revue indépendante : 10 constats, tous corrigés et testés (D-19).
-- Guide complet : docs/GUIDE.md.
+## Ce qui marche (vérifié)
+- **Écran d'ouverture « Mon élevage aujourd'hui »** : l'application s'ouvre dessus avec l'éleveur de démonstration ; le sélecteur de rôle reste accessible par « Changer de rôle » ou `/#/roles`.
+- **Fonctions de lecture** (`apps/api/src/farm.ts`, routes `/api/farm/*`) : situation, changements entre deux états, recherche tolérante (« B 017 », « b17 »), fiche animale avec déplacements, informations manquantes, preuve d'une source. Chaque résultat porte sources, trois dates, période, limites.
+- **Écritures confirmées** : texte ou saisie manuelle, brouillon, validation serveur des champs, confirmation, enregistrement par la synchronisation idempotente existante, reçu du serveur. Un rejeu au contenu différent renvoie 409 au lieu d'un faux doublon. Dates impossibles refusées.
+- **Constellation vivante** (SVG maison) avec liste équivalente et chronologie ; « Montre-moi B-017 » sélectionne l'animal, numérote son parcours, estompe le reste.
+- **Boucle de preuve** : même question après une écriture, réponse mise à jour, puis « Pourquoi ta réponse a changé ? » montre la comparaison des deux états et l'enregistrement ajouté.
+- **Assistant IA réel (Gemini)** : appels de fonctions vérifiés contre la vraie API le 21/11 (`pnpm assistant:check` : liste des modèles, appel minimal, appel de fonction). Citations contrôlées côté serveur ; repli annoncé en lecture directe si le fournisseur échoue.
+- **Sans clé ou avec `ASSISTANT_AI=off`** : la zone de conversation l'annonce et lit les données par règles fixes, sans IA. Tout le parcours passe ainsi.
+- **Hors connexion** : dernière lecture conservée et datée, aucune réponse simulée, observation gardée sur l'appareil puis transmise au retour du réseau.
 
-## Vérifications
-Environnement Claude (Linux, Node 22) :
-- `pnpm -r typecheck` OK ; `pnpm -r test` : domain 33/33, api 46/46, web 6/6.
-- `test:pg` sur un vrai PostgreSQL 16 local : 46/46.
-- `pnpm e2e` : 13/13 (dont vrai hors ligne, mode authentifié, rapport PDF, déconnexion protégée).
-- Essais réels : `pnpm demo`, migration d'une ancienne base, `demo:reset`, `user:create/list/disable`, `db:backup`, `db:restore`.
-- Rapport PDF relu visuellement.
-GitHub Actions (exécution 44028956562, commit 9b9a192) : **tout vert** — job tests (typage, tests, PostgreSQL serveur, 13 E2E) et job Docker (image construite, démarrée, `/api/health` OK, interface servie).
-**Non exécuté** : tout sous Windows ; appel à un vrai modèle d'IA (aucune clé, aucun Ollama ici) ; scan QR avec caméra ; lecteur d'écran ; deuxième appareil.
+## Ce qui ne marche pas ou n'existe pas
+- **Voix** : non implémentée, donc absente de l'interface (aucun bouton micro factice). `GEMINI_LIVE_MODEL` est prévu en configuration, sans code derrière.
+- **Lots** (volailles) : aucun lot en base ; l'écran affiche « aucun lot ». Pas de recherche documentaire, pas de simulateur IoT (bonus non commencés).
+- **Préparer une tâche** par l'assistant : non fait (les tâches existantes viennent des enquêtes).
+- **Vidéo** : rien de produit (ni storyboard dans le dépôt, ni montage, ni rendu).
+- Modèles Gemini : `gemini-3.8-flash` et `gemini-4-hydrogen` répondaient 503 (surcharge) le 21/11 ; `gemini-3.6-flash` a mis jusqu'à 39 s. Retenu : `gemini-3.5-flash-lite` (1 à 6 s), secours `gemini-3.6-flash`.
+- Défauts connus non traités : identifiants en double à la casse près (la recherche les liste, sans les fusionner), fenêtre par défaut d'une enquête pour une date « Inconnue », lisibilité de l'ancien schéma de la console d'enquête.
 
-## Blocages et autorisations
-- Règlement : autorisation du code préalable **non confirmée** → tout le code est à déclarer (docs/DEMO.md).
-- Pas de mise en ligne : mode authentifié non prêt pour Internet (D-13, GUIDE § 7.5).
+## Tests exécutés (Windows, Node 24, 21/11)
+- `pnpm -r typecheck` : OK.
+- `pnpm -r test` : domaine 33/33, API 76/76 (dont 30 nouveaux : `farm.test.ts`, `assistant.test.ts`), web 6/6.
+- `pnpm assistant:check` : opérationnel avec la clé de `sentinelle/.env` (appels réels).
+- Navigateur : parcours déroulé à la main dans l'aperçu intégré, à 1242 px (1366 px à 110 %) et 375 px, sans IA puis avec Gemini.
+- `PW_CHANNEL=chrome pnpm e2e` : **15/15** dans Chrome, sans IA (`ASSISTANT_AI=off`). Dont `vivant.spec.ts` : parcours d'acceptation en 16 étapes, états limites et hors connexion, téléphone 375 px. Les 12 tests antérieurs passent après adaptation (sélecteur de rôle à `/#/roles`, comptages filtrés sur B-017, plus de sélection d'office depuis le correctif du 20/11).
+- Projet `auth` des tests de navigateur : **non exécuté** (ignoré sous Windows) ; `auth.spec.ts` a été adapté sans pouvoir être rejoué ici. Commande : `pnpm e2e` sous Linux ou en CI.
 
-## Prochaine action
-- Sur Windows : `git pull`, `pnpm install`, `pnpm demo`, dérouler docs/DEMO.md ; pour l'IA locale, suivre GUIDE § 5 option A.
+## Blocages et points d'attention
+- **Clés exposées** : les clés ont transité par WhatsApp et par la conversation Claude. À régénérer après la démonstration. La clé « grok » est en réalité une clé Groq (`gsk_`) : non enregistrée, non utilisée.
+- **Palier gratuit Google** : d'après la documentation lue le 21/11, le contenu envoyé sur le palier gratuit sert à améliorer les produits Google. Acceptable ici (données synthétiques), à revoir avant toute donnée réelle. La facturation du projet Google de la clé n'est pas visible depuis ce poste.
+- **Règlement du concours** : autorisation du code préalable toujours non confirmée (D-01, D-09).
+- La base locale `data/pglite` de Yvan n'a pas été réinitialisée : le jeu vivant n'y apparaît qu'après « Réinitialiser le scénario » (accord de Yvan requis, action destructive).
+
+## Prochaine action précise
+1. Décision de Yvan : réinitialiser `data/pglite` (serveur arrêté : `pnpm demo:reset`) pour charger le jeu vivant sur la base de démonstration.
+2. Tranche 9 : rejouer `PW_CHANNEL=chrome pnpm e2e` après toute modification ; faire rejouer `auth.spec.ts` en CI.
+3. Tranche 10 : capture réelle du parcours (étapes 1 à 16) une fois la base réinitialisée.
+4. Tranche 11 : storyboard, narration, sous-titres et prompts de plans dans `docs/VIDEO.md`.

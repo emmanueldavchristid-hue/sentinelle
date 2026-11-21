@@ -32,7 +32,8 @@ export default defineConfig({
       url: `http://127.0.0.1:${PORT}/api/health`,
       reuseExistingServer: false,
       timeout: 60_000,
-      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true' },
+      // ASSISTANT_AI=off : les tests ne dépendent jamais d'un service d'IA externe (lecture directe des données).
+      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: 'off' },
     },
     ...(process.platform === 'win32'
       ? []
@@ -42,7 +43,7 @@ export default defineConfig({
             url: `http://127.0.0.1:${PORT + 1}/api/health`,
             reuseExistingServer: false,
             timeout: 90_000,
-            env: { PORT: String(PORT + 1), DATA_DIR: '/tmp/sentinelle-e2e-auth', DEMO_MODE: 'false' },
+            env: { PORT: String(PORT + 1), DATA_DIR: '/tmp/sentinelle-e2e-auth', DEMO_MODE: 'false', ASSISTANT_AI: 'off' },
           },
         ]),
   ],

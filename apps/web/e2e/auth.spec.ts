@@ -11,6 +11,8 @@ test('mode authentifié : pas de sélecteur de rôle, mauvais mot de passe refus
   await expect(page.getByRole('alert')).toContainText('Identifiant ou mot de passe incorrect');
   await page.getByLabel('Mot de passe').fill('mot-de-passe-e2e-2026');
   await page.getByRole('button', { name: 'Se connecter' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Mon élevage aujourd’hui' })).toBeVisible();
+  await page.getByRole('link', { name: 'Signalements' }).click();
   await expect(page.getByRole('heading', { name: 'Signalements' })).toBeVisible();
   await expect(page.getByText('session authentifiée')).toBeVisible();
   const cookies = await page.context().cookies();
