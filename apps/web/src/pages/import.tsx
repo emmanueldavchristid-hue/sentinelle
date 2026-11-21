@@ -53,7 +53,15 @@ export function ImportPage() {
     if (!f) return;
     if (f.size > 256 * 1024) return setError('Fichier trop volumineux (256 Ko maximum).');
     setFileName(f.name);
-    setCsv(await f.text());
+    const buf = await f.arrayBuffer();
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    } catch {
+      // Excel (Windows, français) enregistre souvent les CSV en Windows-1252.
+      text = new TextDecoder('windows-1252').decode(buf);
+    }
+    setCsv(text);
   };
 
   const doPreview = async () => {

@@ -223,6 +223,13 @@ export function ObservationForm({ animalId }: { animalId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, animalId]);
 
+  // Les fiches préchargées peuvent arriver après le brouillon : préremplir le lieu actuel si rien n'est choisi.
+  useEffect(() => {
+    if (!draft || draft.locationId || restored || draft.animalId !== animalId) return;
+    const current = preload?.cards.find((c) => c.animal.id === animalId)?.currentLocationId;
+    if (current) setDraft((d) => (d && !d.locationId ? { ...d, locationId: current } : d));
+  }, [preload, draft, animalId, restored]);
+
   /** Brouillon local enregistré à chaque modification : survit à la fermeture de l'onglet. */
   const update = (patch: Partial<ObservationDraft>) => {
     setDraft((d) => {
@@ -493,9 +500,14 @@ export function TaskCorrection({ taskId }: { taskId: string }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [idemKey] = useState(() => crypto.randomUUID());
+  const idemKey = useMemo(() => crypto.randomUUID(), [taskId]);
+  const [savedRev, setSavedRev] = useState<number | null>(null);
 
   useEffect(() => {
+    setResult(null);
+    setSavedRev(null);
+    setReason('');
+    setErrors({});
     api<TaskDto[]>('/api/tasks', { session })
       .then((ts) => {
         const t = ts.find((x) => x.id === taskId) ?? null;
@@ -537,6 +549,7 @@ export function TaskCorrection({ taskId }: { taskId: string }) {
         : { kind: 'movement', idempotencyKey: idemKey, baseRev: rec.rev, departure: a.value, arrival: b.value, reason: reason.trim() };
       const r = await api<{ rev: number }>(`/api/records/${encodeURIComponent(rec.id)}/revisions`, { method: 'POST', session, body });
       setResult({ tone: 'ok', text: `Révision ${r.rev} enregistrée. La révision ${rec.rev} reste consultable. L’enquêteur peut relancer l’analyse.` });
+      setSavedRev(r.rev);
     } catch (err) {
       if (err instanceof ApiFailure && err.status === 400 && err.body.fields) setErrors(err.body.fields as Record<string, string>);
       setResult({ tone: 'error', text: err instanceof NetworkError ? `${err.message}. La correction n’a pas été enregistrée : réessayez une fois connecté.` : errorMessage(err) });
@@ -544,6 +557,24 @@ export function TaskCorrection({ taskId }: { taskId: string }) {
       setBusy(false);
     }
   };
+
+  if (savedRev !== null)
+    return (
+      <div className="mx-auto max-w-2xl space-y-4">
+        <a href="#/taches" className="text-sm">
+          ← Vérifications
+        </a>
+        <div className="card space-y-4 p-4">
+          <h1 className="text-xl font-bold">{task.label}</h1>
+          <Banner tone="ok">
+            Révision {savedRev} enregistrée pour {rec.id}. La révision {rec.rev} reste consultable. L’enquêteur peut relancer l’analyse.
+          </Banner>
+          <a className="btn btn-primary" href="#/taches">
+            Retour aux vérifications
+          </a>
+        </div>
+      </div>
+    );
 
   return (
     <form className="mx-auto max-w-2xl space-y-4" onSubmit={submit} noValidate>

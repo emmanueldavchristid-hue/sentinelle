@@ -60,6 +60,7 @@ export async function buildApp(opts: AppOptions) {
     const e = err as { statusCode?: number; message?: string };
     if (e.statusCode && e.statusCode < 500) return reply.status(e.statusCode).send({ error: 'BAD_REQUEST', message: 'Requête invalide' });
     app.log.error(err);
+    if (!opts.logger) console.error('[sentinelle] erreur 500 :', err);
     return reply.status(500).send({ error: 'INTERNAL', message: 'Erreur interne du serveur' });
   });
 

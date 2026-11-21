@@ -147,10 +147,10 @@ function RolePicker() {
           {error ? <ErrorView error={error} onRetry={load} /> : null}
           {!users && !error ? <Loading /> : null}
           <ul className="space-y-2">
-            {users?.map((u) => (
+            {users && [...users].sort((a, b) => Number(a.org_id !== 'ORG-DEMO') - Number(b.org_id !== 'ORG-DEMO')).map((u) => (
               <li key={u.id}>
                 <button
-                  className="btn w-full justify-between text-left"
+                  className="btn w-full flex-wrap justify-between gap-x-3 whitespace-normal text-left"
                   onClick={() => {
                     login({ userId: u.id, name: u.name, role: u.role, orgId: u.org_id, orgName: u.org_name });
                     go(u.role === 'AGENT' ? 'animaux' : 'signalements');
