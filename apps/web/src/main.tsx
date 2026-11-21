@@ -13,6 +13,7 @@ import { QrScan } from './pages/qr';
 import { InvestigationConsole } from './pages/console';
 import { Report } from './pages/report';
 import { FarmHome } from './pages/farm';
+import { BeaconPage } from './pages/beacon';
 import { conversation, session as farmSession } from './farm/store';
 
 interface DemoUser {
@@ -208,6 +209,8 @@ function RolePicker() {
 function Router() {
   const { session } = useApp();
   const [page, arg, arg2] = useRoute();
+  // Page « balise » ouverte sur un téléphone par son lien : elle s'authentifie par le jeton du dispositif, sans session.
+  if (page === 'balise' && arg && arg2) return <BeaconPage id={arg} token={arg2} />;
   if (!session) return <Home />;
   // Écran d'ouverture, commun à tous les rôles : « Mon élevage aujourd'hui ».
   if (page === undefined || page === 'elevage' || page === 'roles') {

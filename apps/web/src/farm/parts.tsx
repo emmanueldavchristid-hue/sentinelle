@@ -45,6 +45,7 @@ export function refShort(ref: string): string {
   if (kind === 'TASK') return `Tâche …${rest.slice(-6)}`;
   if (kind === 'ANIMAL') return rest;
   if (kind === 'SITE') return `Site ${rest}`;
+  if (kind === 'DEVICE') return `Balise ${rest}`;
   return ref;
 }
 

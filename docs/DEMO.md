@@ -27,6 +27,8 @@ Ce script correspond au parcours d'acceptation en 16 étapes du brief, rejoué a
 
 Variante vocale (IA activée, micro autorisé dans le navigateur) : à 1:20, cliquer **Dicter**, dire « Ajoute une observation sur B zéro dix-sept : elle mange moins depuis ce matin », cliquer **Arrêter et transcrire**, relire le texte, puis **Demander**. À n'utiliser en public qu'après un essai concluant avec le micro de la salle.
 
+Variante « balise » (à n'utiliser qu'après un essai réel avec le téléphone prévu) : ouvrir l'application par le lien https, « Associer une balise » sur un animal (par exemple B-071), scanner le QR code avec le téléphone. Sur le téléphone : « Distance simulée » pour une salle (bandeau « données simulées » visible), ou « Autoriser la position » puis « Fixer le repère ici » si l'on peut s'éloigner dehors. Quand la distance dépasse le seuil, l'alerte apparaît sur l'écran de l'éleveur ; demander alors « Quel animal s'est éloigné ? » (au micro : la réponse est lue à voix haute). À dire : c'est un téléphone qui joue le rôle d'un capteur, la balise mesure sa propre distance, aucun capteur n'est posé sur un animal.
+
 Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier ? », « Montre-moi B-017 », « Quelles informations manquent ? », « Ajoute une observation sur B-017 : … », « Pourquoi ta réponse a changé ? », « Quelle est la situation de mon élevage ? ». Avec l'IA, les formulations libres fonctionnent aussi.
 
 ## Secours
@@ -39,7 +41,7 @@ Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier
 - Vidéo de secours : **non enregistrée** à ce jour.
 
 ## Limites à annoncer
-- Données synthétiques ; aucune intégration réelle ; aucun capteur ; aucune donnée en temps réel.
+- Données synthétiques ; aucune intégration réelle ; aucun capteur posé sur un animal. La seule mesure automatique est la balise de démonstration (un téléphone), relue toutes les 4 secondes.
 - Voix : dictée d'une phrase (transcrite puis relue), pas de conversation parlée en direct. Pas de lots (volailles), pas de recherche documentaire dans cette version.
 - Sélecteur de rôle = mode démonstration, pas une authentification.
 - L'assistant ne voit que ce qui est enregistré. Une absence d'observation n'est pas un bon état de santé.

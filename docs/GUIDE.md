@@ -33,6 +33,8 @@ Ajouter une observation : écrire « Ajoute une observation sur B-017 : … » o
 
 **Dicter** : sous la zone de question, « Dicter » ouvre le micro (le navigateur demande l'autorisation la première fois). Parlez, puis « Arrêter et transcrire » : le texte apparaît dans la zone de question, à relire avant « Demander ». « Annuler » n'envoie rien. La dictée demande l'assistant IA, une connexion, et une page en https ou sur localhost ; l'enregistrement est limité à 30 secondes et n'est pas conservé. « Écouter la réponse » lit une réponse avec la voix de synthèse de l'appareil.
 
+**Balises de démonstration** : dans la section « Balises », « Associer une balise » à un animal crée un lien et un QR code à ouvrir sur un téléphone (l'application doit être ouverte par une adresse https joignable, pas par localhost). Sur le téléphone, soit « Autoriser la position » puis « Fixer le repère ici » près de l'ordinateur, soit « Distance simulée ». La page doit rester ouverte, écran allumé. L'écran de l'éleveur affiche le statut de chaque balise et une alerte quand l'une d'elles dépasse son seuil ; « Arrêter » met fin au suivi, et la réinitialisation de la démonstration efface les balises. Les coordonnées GPS restent sur le téléphone : seule la distance au repère est transmise.
+
 Sans assistant IA configuré, quelques formulations sont reconnues par des règles fixes (elles sont proposées à l’écran) et la saisie manuelle reste complète. Configuration de l’assistant : § 5.
 
 ### 3.1 Choisir un rôle (mode démonstration)

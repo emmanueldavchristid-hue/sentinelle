@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AnimalData, AssistantReply, ChangesData, ObservationDraftData, SituationData, ToolResult } from '@sentinelle/contracts';
+import type { AnimalData, AssistantReply, BeaconsData, ChangesData, ObservationDraftData, SituationData, ToolResult } from '@sentinelle/contracts';
 import { api, ApiFailure, errorMessage, NetworkError } from '../api';
 import { enqueueObservation } from '../local';
 import { go, useApp } from '../state';
+import { BeaconAlert, BeaconsPanel } from '../farm/Beacons';
 import { Constellation } from '../farm/Constellation';
 import { canSpeak, Dictation, speak, stopSpeaking } from '../farm/Voice';
 import { DraftCard, describeDraft, EvidenceDialog, fmtInstant, fmtState, ResultView, SourceChip, Timeline, type DraftValues } from '../farm/parts';
@@ -61,6 +62,13 @@ function localDraftReply(animalId: string | null): AssistantReply {
   };
 }
 
+/** Texte lu à voix haute pour une réponse : le texte de l'IA, sinon les premières phrases de la lecture, sans les identifiants de source. */
+const spokenText = (reply: AssistantReply | null): string =>
+  (reply?.text ?? reply?.results[0]?.statements.slice(0, 4).map((st) => st.text).join(' ') ?? reply?.notice ?? '')
+    .replace(/\[(?:OBS|REC|TASK|ANIMAL|SITE|DEVICE):[^\]]+\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 const newExchange = (question: string): Exchange => ({ id: crypto.randomUUID(), question, askedAt: new Date().toISOString(), pending: true, error: null, offline: false, reply: null, key: null, update: null, compared: null, draft: null, receipt: null });
 
 export function FarmHome({ animalId }: { animalId: string | null }) {
@@ -80,6 +88,15 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
   const situation = useTool<SituationData>('/api/farm/situation', 'farm.situation', version);
   const changes = useTool<ChangesData>('/api/farm/changes', 'farm.changes', version);
   const animal = useTool<AnimalData>(animalId ? `/api/farm/animals/${encodeURIComponent(animalId)}` : null, animalId ? `farm.animal.${animalId}` : null, version);
+  // Balises de démonstration : relues toutes les 4 secondes tant qu'au moins une est suivie (lecture réelle, pas un flux simulé).
+  const [beaconTick, setBeaconTick] = useState(0);
+  const beacons = useTool<BeaconsData>('/api/farm/devices', null, version + beaconTick);
+  const beaconsActive = (beacons.data?.data.beacons ?? []).some((b) => b.status !== 'STOPPED');
+  useEffect(() => {
+    if (!beaconsActive) return;
+    const t = setInterval(() => setBeaconTick((n) => n + 1), 4000);
+    return () => clearInterval(t);
+  }, [beaconsActive]);
 
   useEffect(() => {
     db?.outbox.where('state').anyOf(['PENDING', 'SENDING', 'FAILED']).count().then(setPendingOutbox).catch(() => {});
@@ -108,14 +125,14 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
       stopSpeaking();
       return setSpeakingId(null);
     }
-    const said = (ex.reply?.text ?? ex.reply?.results[0]?.statements.slice(0, 5).map((st) => st.text).join(' ') ?? '').replace(/\[(?:OBS|REC|TASK|ANIMAL|SITE):[^\]]+\]/g, '').replace(/\s+/g, ' ');
-    if (!said.trim()) return;
+    const said = spokenText(ex.reply);
+    if (!said) return;
     setSpeakingId(ex.id);
     speak(said, () => setSpeakingId((id) => (id === ex.id ? null : id)));
   };
 
   const ask = useCallback(
-    async (question: string) => {
+    async (question: string, spoken = false) => {
       const q = question.trim();
       if (!q) return;
       const ex = newExchange(q);
@@ -143,6 +160,12 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
         const update = first && prevResult && resultDigest(prevResult) !== resultDigest(first) ? { previousAsOf: prevResult.asOf, previousSummary: resultSummary(prevResult), currentSummary: resultSummary(first) } : null;
         const compared = reply.intent === 'why_changed' && compare && updated ? { from: compare.from, to: compare.to, before: updated.update!.previousSummary, after: updated.update!.currentSummary } : null;
         conversation.patch(ex.id, { pending: false, reply, key, update, compared, draft: reply.results.some((r) => r.tool === 'prepare_observation') ? 'open' : null });
+        // Question dictée : la réponse est aussi lue à voix haute (voix de synthèse de l'appareil), sans rien changer à l'écran.
+        if (spoken && canSpeak() && spokenText(reply)) {
+          setSpeakingId(ex.id);
+          speak(spokenText(reply), () => setSpeakingId((id) => (id === ex.id ? null : id)));
+        }
+        if (reply.results.some((r) => r.tool === 'beacons')) setBeaconTick((n) => n + 1);
         const shown = reply.results.find((r) => r.tool === 'animal');
         if (shown) go(`elevage/animal/${encodeURIComponent(String(shown.params.animalId))}`);
       } catch (e) {
@@ -229,6 +252,8 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
         </p>
       )}
 
+      <BeaconAlert result={beacons.data} onSource={onSource} onAsk={() => ask('Quel animal s’est éloigné ?')} />
+
       {/* Registre : les quatre questions de l'ouverture, en une seule ligne réglée */}
       {s ? (
         <div className="v-ledger" role="group" aria-label="Situation enregistrée">
@@ -287,6 +312,8 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
         {/* Représentation de l'exploitation */}
         <div className="min-w-0 space-y-7">
           {s && <Constellation sites={s.sites} moves={s.moves} recent={changes.data?.data.events ?? s.recent.events} animal={animalId ? (animal.data?.data ?? null) : null} highlight={highlight} fresh={fresh} onSource={onSource} />}
+
+          <BeaconsPanel session={session} result={beacons.data} error={beacons.error} defaultAnimal={animalId} onChanged={() => setBeaconTick((n) => n + 1)} onSource={onSource} />
 
           <section aria-labelledby="chrono-h">
             <div className="flex flex-wrap items-end justify-between gap-3 border-b-2 border-encre pb-2">
@@ -366,7 +393,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
             className="v-ask mt-3"
             onSubmit={(e) => {
               e.preventDefault();
-              ask(text);
+              ask(text, !!dictated);
             }}
           >
             <label htmlFor="ask" className="sr-only">
@@ -387,7 +414,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  ask(text);
+                  ask(text, !!dictated);
                 }
               }}
             />

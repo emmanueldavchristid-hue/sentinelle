@@ -29,6 +29,7 @@ import {
 } from '@sentinelle/contracts';
 import type { Db, Queryable } from './db.js';
 import { HttpError, parse, type User } from './http.js';
+import { beaconFunctions } from './beacons.js';
 
 /**
  * SENTINELLE VIVANT : fonctions de lecture de l'exploitation et préparation des écritures.
@@ -386,6 +387,7 @@ export function farmTools(db: Db) {
     sources: uniqueSources(sources),
     limits,
   });
+  const beacons = beaconFunctions(db);
   const NO_SENSOR = 'Aucun capteur n’est connecté : seuls les enregistrements saisis ou importés sont pris en compte.';
 
   async function resetDate(orgId: string): Promise<string | null> {
@@ -563,12 +565,16 @@ export function farmTools(db: Db) {
     const p = parse(SourceParamsSchema, raw);
     const asOf = await dbNow(db);
     const sites = await loadSites(db, u.org_id);
-    const m = /^(OBS|REC|TASK|ANIMAL|SITE):([^@#]+)(?:@(\d{1,6}))?(?:#.*)?$/.exec(p.ref);
+    const m = /^(OBS|REC|TASK|ANIMAL|SITE|DEVICE):([^@#]+)(?:@(\d{1,6}))?(?:#.*)?$/.exec(p.ref);
     const notFound = () => new HttpError(404, 'NOT_FOUND', 'Source introuvable dans votre périmètre');
     if (!m) throw notFound();
     const [, kind, id, revStr] = m as unknown as [string, string, string, string | undefined];
     let data: SourceData;
-    if (kind === 'OBS') {
+    if (kind === 'DEVICE') {
+      const d = await beacons.source(u, id);
+      if (!d) throw notFound();
+      data = d;
+    } else if (kind === 'OBS') {
       if (!isUuid(id)) throw notFound();
       const o = (
         await db.query<Record<string, unknown>>(
@@ -782,7 +788,7 @@ export function farmTools(db: Db) {
     return envelope('prepare_observation', { text: p.text ?? null, contextAnimalId: p.contextAnimalId ?? null }, asOf, null, statements, data, [...(chosen ? [{ ref: `ANIMAL:${chosen.id}`, label: chosen.tag }] : []), ...(possibleDuplicate ? [possibleDuplicate] : [])], limits);
   }
 
-  return { situation, changes, findAnimal, animal, missing, source, prepareObservation };
+  return { situation, changes, findAnimal, animal, missing, source, prepareObservation, beacons: beacons.read };
 }
 
 export type FarmTools = ReturnType<typeof farmTools>;
@@ -803,5 +809,6 @@ export function registerFarm(ctx: Ctx): FarmTools {
   ctx.app.get('/api/farm/missing', async (req) => tools.missing(await ctx.currentUser(req)));
   ctx.app.get('/api/farm/sources', async (req) => tools.source(await ctx.currentUser(req), req.query ?? {}));
   ctx.app.post('/api/farm/observations/draft', async (req) => tools.prepareObservation(await ctx.currentUser(req), req.body));
+  ctx.app.get('/api/farm/devices', async (req) => tools.beacons(await ctx.currentUser(req)));
   return tools;
 }

@@ -32,6 +32,7 @@ import { findReplay, lock, requestHash, saveReplay } from './idempotency.js';
 import { type AuthConfig, registerAuth, sessionUser } from './auth.js';
 import { registerImport } from './import.js';
 import { registerFarm } from './farm.js';
+import { registerBeacons } from './beacons.js';
 import { type AssistantOptions, registerAssistant } from './assistant.js';
 import { type StructuringProvider, type SummaryProvider, registerAssist, structuringFromLlm, summaryFromLlm } from './assist.js';
 import type { LlmClient } from './llm.js';
@@ -73,8 +74,8 @@ export async function buildApp(opts: AppOptions) {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Frame-Options', 'DENY');
-    // Le microphone n'est utilisé que par la dictée, sur action explicite de l'utilisateur.
-    reply.header('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+    // Micro : dictée seulement. Position : page « balise » seulement. Toujours sur action explicite de l'utilisateur.
+    reply.header('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(self)');
     reply.header(
       'Content-Security-Policy',
       "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
@@ -206,6 +207,7 @@ export async function buildApp(opts: AppOptions) {
   registerAuth(ctx, opts.auth);
   registerImport(ctx);
   const farm = registerFarm(ctx);
+  registerBeacons(ctx);
   const assistant = registerAssistant(ctx, farm, opts.assistant ?? { model: null });
   const llm = opts.llm ?? null;
   const assist = registerAssist(

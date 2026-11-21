@@ -68,6 +68,7 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
   jamais de minuit implicite, heure d'événement ≠ heure de saisie.
 - Moteur : mêmes données + paramètres → mêmes résultats ; cycles, profondeur, plafond, déduplication.
 - Assistant : faits issus des fonctions de `farm.ts` uniquement, cinq natures d'information étiquetées, trois dates distinguées, aucune écriture sans brouillon puis confirmation, aucun faux temps réel.
+- Balises : toujours « la balise associée à tel animal », jamais « l'animal s'évade » ; source de la mesure (GPS du téléphone ou simulée) affichée partout ; aucune notification externe.
 - Chaque analyse stocke paramètres, `engineVersion`, instantané des données et `snapshotHash` (D-03).
 - Corrections = nouvelles révisions, jamais d'écrasement. Pas de score de contamination.
 - Pas de durée d'incubation codée ; fenêtre choisie par l'enquêteur ; règles marquées « à valider ».
@@ -93,4 +94,4 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - `docs/GUIDE.md` — guide complet : installation, utilisation, IA, import, administration, dépannage
 
 ## Modules API
-`farm.ts` (SENTINELLE VIVANT : lecture de l'exploitation, brouillon d'observation, routes `/api/farm/*`) · `assistant.ts` (conversation : mode direct sans IA, mode IA par fonctions) · `gemini.ts` (client REST) · `seed-living.ts` (jeu vivant daté relativement à la réinitialisation) · `app.ts` (cœur, enquêtes, corrections, historique) · `auth.ts` (D-13) · `import.ts` (D-14) · `assist.ts` + `llm.ts` (D-15, D-18) · `idempotency.ts` (D-19) · `http.ts` · `db-tools.ts`, `users.ts`, `user-create.ts` (CLI)
+`beacons.ts` (balises de démonstration : un téléphone transmet sa distance à un repère ; routes `/api/farm/devices` et `/api/devices/:id/*`) · `farm.ts` (SENTINELLE VIVANT : lecture de l'exploitation, brouillon d'observation, routes `/api/farm/*`) · `assistant.ts` (conversation : mode direct sans IA, mode IA par fonctions) · `gemini.ts` (client REST) · `seed-living.ts` (jeu vivant daté relativement à la réinitialisation) · `app.ts` (cœur, enquêtes, corrections, historique) · `auth.ts` (D-13) · `import.ts` (D-14) · `assist.ts` + `llm.ts` (D-15, D-18) · `idempotency.ts` (D-19) · `http.ts` · `db-tools.ts`, `users.ts`, `user-create.ts` (CLI)

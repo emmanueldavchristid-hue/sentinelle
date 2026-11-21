@@ -62,7 +62,7 @@ export interface FarmEvent {
   author: string | null;
 }
 
-export type FarmToolName = 'situation' | 'changes' | 'find_animal' | 'animal' | 'missing' | 'source' | 'prepare_observation';
+export type FarmToolName = 'situation' | 'changes' | 'find_animal' | 'animal' | 'missing' | 'source' | 'prepare_observation' | 'beacons';
 
 /** Enveloppe commune à tous les résultats : données, sources, dates, limites, paramètres. */
 export interface ToolResult<T = unknown> {
@@ -149,7 +149,7 @@ export interface MissingData {
 }
 export interface SourceData {
   ref: string;
-  kind: 'observation' | 'record' | 'task' | 'animal' | 'site';
+  kind: 'observation' | 'record' | 'task' | 'animal' | 'site' | 'device';
   title: string;
   /** Champs lisibles de l'enregistrement, dans l'ordre d'affichage. */
   fields: { label: string; value: string }[];
@@ -178,6 +178,55 @@ export interface ObservationDraftData {
   possibleDuplicate: SourceRef | null;
 }
 
+// ---------- Balises de démonstration : contrat d'événement IoT minimal ----------
+
+/** Statut d'une mesure par rapport au seuil. « Incertain » : la précision ne permet pas de trancher. */
+export type ZoneState = 'INSIDE' | 'OUTSIDE' | 'UNCERTAIN' | 'NO_FIX';
+
+/**
+ * Une mesure d'un dispositif. Le contrat porte : la source, l'instant observé, l'instant reçu, l'unité (mètres, fixe),
+ * la précision annoncée et le statut calculé par le serveur. L'identifiant du dispositif est porté par la balise.
+ */
+export interface BeaconReading {
+  /** PHONE_GPS : GPS du navigateur d'un téléphone. SIMULATED : distance réglée à la main, à afficher comme simulée. */
+  source: 'PHONE_GPS' | 'SIMULATED';
+  observedAt: string;
+  receivedAt: string;
+  distanceM: number | null;
+  accuracyM: number | null;
+  zone: ZoneState;
+}
+export interface Beacon {
+  id: string;
+  label: string;
+  animalId: string | null;
+  radiusM: number;
+  createdAt: string;
+  stoppedAt: string | null;
+  latest: BeaconReading | null;
+  /** NEVER : aucune mesure reçue. SILENT : plus de mesure depuis un moment (ne dit pas où est la balise). */
+  status: ZoneState | 'NEVER' | 'SILENT' | 'STOPPED';
+  outsideSince: string | null;
+  silentSeconds: number | null;
+  recent: BeaconReading[];
+}
+export interface BeaconsData {
+  beacons: Beacon[];
+  /** Identifiants des balises hors de leur zone. */
+  alerts: string[];
+  /** Vrai si au moins une balise active transmet une distance simulée : bandeau « données simulées » obligatoire. */
+  simulated: boolean;
+}
+export const BEACON_STATUS_LABELS: Record<Beacon['status'], string> = {
+  INSIDE: 'Dans la zone',
+  OUTSIDE: 'Hors de la zone',
+  UNCERTAIN: 'Incertain',
+  NO_FIX: 'Pas de position',
+  NEVER: 'Aucune mesure reçue',
+  SILENT: 'Muette',
+  STOPPED: 'Arrêtée',
+};
+
 /** État de l'assistant IA, tel que le serveur le connaît. Aucune valeur secrète. */
 export interface AssistantStatus {
   configured: boolean;
@@ -204,7 +253,7 @@ export interface TranscriptionReply {
 export interface AssistantReply {
   mode: 'direct' | 'ai';
   provider: string | null;
-  intent: 'situation' | 'changes' | 'why_changed' | 'why_shown' | 'animal' | 'missing' | 'draft' | 'unknown' | 'ai';
+  intent: 'situation' | 'changes' | 'why_changed' | 'why_shown' | 'animal' | 'missing' | 'beacons' | 'draft' | 'unknown' | 'ai';
   /** Texte formulé par le modèle (mode « ai » uniquement). */
   text: string | null;
   /** Comment la réponse a été produite. Toujours affiché. */
