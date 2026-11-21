@@ -136,6 +136,14 @@
   .v-btn-go:disabled { opacity: 0.5; cursor: not-allowed; }
   .v-chip { display: inline-flex; align-items: center; min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--color-filet); background: var(--color-papier); font-size: 14px; color: var(--color-encre); cursor: pointer; text-align: left; }
   .v-chip:hover { border-color: var(--color-encre); }
+  .v-chip[aria-pressed="true"] { border-color: var(--color-encre); background: var(--color-encre); color: #fff; }
+  /* Dictée : le micro actif se voit (bordure, point, libellé), pas seulement par la couleur. */
+  .v-mic { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-radius: 6px; border: 1.5px solid var(--color-encre); background: var(--color-papier); color: var(--color-encre); font-weight: 650; font-size: 15.5px; cursor: pointer; }
+  .v-mic:hover { background: #fff; }
+  .v-mic:active { transform: translateY(1px); }
+  .v-mic:disabled { opacity: 0.55; cursor: not-allowed; border-style: dashed; }
+  .v-mic[data-recording="true"] { border-color: var(--color-laterite); background: var(--color-laterite-soft); color: var(--color-laterite); border-width: 2px; }
+  .v-mic-dot { width: 12px; height: 12px; border-radius: 999px; background: var(--color-danger); }
   .v-exchange { border-top: 1px solid var(--color-filet); padding: 18px 0 20px; }
   .v-question { font-family: var(--font-display); font-size: 20px; line-height: 1.25; font-weight: 520; letter-spacing: -0.01em; }
   .v-nature { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; }
@@ -181,6 +189,8 @@
   .v-appear { animation: v-appear 420ms ease-out 1; }
   @keyframes v-appear { 0% { opacity: 0; transform: translateY(6px); } 100% { opacity: 1; transform: none; } }
   .v-sky-dim { transition: opacity 260ms ease; }
+  .v-mic-dot { animation: v-blink 1.1s ease-in-out infinite; }
+  @keyframes v-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 }
 @media (prefers-reduced-motion: reduce) {
   .v-pulse { opacity: 0; }

@@ -24,11 +24,14 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 - **Assistant IA réel (Gemini)** : appels de fonctions vérifiés contre la vraie API le 21/11 (`pnpm assistant:check` : liste des modèles, appel minimal, appel de fonction). Citations contrôlées côté serveur ; repli annoncé en lecture directe si le fournisseur échoue. Pour les questions de lecture reconnues (changements, manques, situation), le serveur fait la lecture de référence et le modèle la formule : deux réponses à la même question restent comparables. « Pourquoi ta réponse a changé ? » est toujours calculé directement.
 - **Brouillon demandé par l'IA** : les valeurs avancées par le modèle sont recoupées avec la phrase de l'utilisateur. Constat réel du 21/11 : pour « ce matin », le modèle proposait 08:00 ; corrigé, aucune heure n'est gardée si elle n'est pas écrite, et un animal ou un lieu absent de la phrase est signalé « à vérifier » ou écarté.
 - **Preuve produit (livrable A)** : deux captures réelles du parcours en 16 étapes, une seule prise chacune, 1366 x 768, enregistrées par le navigateur et contrôlées sur images extraites : `docs/captures/parcours-vivant.webm` (54 s, sans IA) et `docs/captures/parcours-vivant-ia.webm` (64 s, Gemini réel). Reproductibles : `apps/web/e2e/capture.spec.ts` (`CAPTURE=1`). Format WebM, pas MP4.
+- **Dictée (voix, tranche 7)** : bouton « Dicter » sous la zone de question. Enregistrement court déclenché et arrêté par l'utilisateur (30 s au plus, `VOICE_MAX_SESSION_SECONDS`), micro actif signalé avec compteur, annulation possible. L'audio est converti en WAV dans le navigateur, transcrit par Gemini via le serveur (`POST /api/assistant/transcribe`), puis jeté : ni l'audio ni le texte ne sont stockés ou journalisés. Le texte revient dans la zone de saisie pour relecture, puis suit le parcours écrit (brouillon, confirmation). Vérifié de bout en bout dans Chrome avec un faux micro (fichier de synthèse) et une vraie transcription : `VOIX=1 PW_CHANNEL=chrome pnpm --filter @sentinelle/web exec playwright test --project=voix`. Transcription réelle mesurée : 2,8 s.
+- **Écouter la réponse** : lecture par la voix de synthèse de l'appareil (aucun service externe). Bouton présent si le navigateur la propose ; non vérifié à l'oreille.
 - **Sans clé ou avec `ASSISTANT_AI=off`** : la zone de conversation l'annonce et lit les données par règles fixes, sans IA. Tout le parcours passe ainsi.
 - **Hors connexion** : dernière lecture conservée et datée, aucune réponse simulée, observation gardée sur l'appareil puis transmise au retour du réseau.
 
 ## Ce qui ne marche pas ou n'existe pas
-- **Voix** : non implémentée, donc absente de l'interface (aucun bouton micro factice). `GEMINI_LIVE_MODEL` est prévu en configuration, sans code derrière.
+- **Conversation vocale en direct** (API Live, échange parlé continu) : non implémentée. `GEMINI_LIVE_MODEL` reste prévu en configuration, sans code derrière. Ce qui existe est la dictée (voir « Ce qui marche »).
+- Dictée : le refus du micro, l'absence de micro et la coupure réseau ont leurs messages, mais ces trois cas n'ont pas été rejoués dans un navigateur (seuls le parcours complet et l'annulation l'ont été). Aucun essai avec une vraie voix humaine ni sur téléphone.
 - **Lots** (volailles) : aucun lot en base ; l'écran affiche « aucun lot ». Pas de recherche documentaire, pas de simulateur IoT (bonus non commencés).
 - **Préparer une tâche** par l'assistant : non fait (les tâches existantes viennent des enquêtes).
 - **Vidéo de vision (livrable B)** : script seul. `docs/VIDEO.md` (storyboard, narration, captures à tourner, prompts de plans, instructions) et `docs/video/sous-titres-vision.srt` existent ; aucun plan généré, aucune voix, aucun montage, aucun rendu, aucun MP4.
@@ -38,7 +41,8 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 
 ## Tests exécutés (Windows, Node 24, 21/11)
 - `pnpm -r typecheck` : OK.
-- Tests unitaires : API **80/80** (dont 34 nouveaux : `farm.test.ts`, `assistant.test.ts`), web 6/6. Domaine **32/33** l'après-midi du 21/11 : le test de performance du moteur (« 2 000 animaux, calcul sous 2 s ») échoue à 2,3 s sur cette machine alors qu'il passait le matin (33/33) ; le code du moteur n'a pas été modifié, le seuil non plus.
+- Dictée : `voix.spec.ts` 1/1 (à la demande, appel réel).
+- Tests unitaires : API **84/84** (dont 38 nouveaux : `farm.test.ts`, `assistant.test.ts`), web 6/6. Domaine **32/33** l'après-midi du 21/11 : le test de performance du moteur (« 2 000 animaux, calcul sous 2 s ») échoue à 2,3 s sur cette machine alors qu'il passait le matin (33/33) ; le code du moteur n'a pas été modifié, le seuil non plus.
 - `pnpm assistant:check` : opérationnel avec la clé de `sentinelle/.env` (appels réels).
 - Navigateur : parcours déroulé à la main dans l'aperçu intégré, à 1242 px (1366 px à 110 %) et 375 px, sans IA puis avec Gemini.
 - `PW_CHANNEL=chrome pnpm e2e` : **15/15** dans Chrome (plus la capture, ignorée sans `CAPTURE=1`), sans IA (`ASSISTANT_AI=off`). Dont `vivant.spec.ts` : parcours d'acceptation en 16 étapes, états limites et hors connexion, téléphone 375 px. Les 12 tests antérieurs passent après adaptation (sélecteur de rôle à `/#/roles`, comptages filtrés sur B-017, plus de sélection d'office depuis le correctif du 20/11).
@@ -54,5 +58,5 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 1. Le jour de la démonstration : réinitialiser de nouveau le jeu (dates relatives), lancer `pnpm assistant:check`, puis dérouler `docs/DEMO.md` une fois en entier sur `http://localhost:3000`.
 2. Tranche 9 : rejouer `PW_CHANNEL=chrome pnpm e2e` après toute modification ; faire rejouer `auth.spec.ts` en CI.
 3. Décisions de Yvan pour la vidéo de vision (voir `docs/VIDEO.md`, « Points ouverts ») : voie de montage, plans générés ou motion design, voix.
-4. Voix (tranche 7) : non commencée ; à n'aborder que si le temps le permet, testée séparément du texte.
+4. Dictée : l'essayer avec une vraie voix, au micro du PC de démonstration puis sur téléphone par le lien https ; décider si elle entre dans le script de démonstration.
 5. Décider du sort du test de performance du moteur (seuil de 2 s dépassé sur cette machine).

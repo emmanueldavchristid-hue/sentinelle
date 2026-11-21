@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { extractAnimalIds, isRealDate, type AssistantReply, type AssistantStatus, type FindAnimalData, type SourceData, type ToolResult } from '@sentinelle/contracts';
+import { extractAnimalIds, isRealDate, type AssistantReply, type AssistantStatus, type FindAnimalData, type SourceData, type ToolResult, type TranscriptionReply } from '@sentinelle/contracts';
 import type { Db, Queryable } from './db.js';
 import type { FarmTools } from './farm.js';
 import { GeminiError, type AssistantModel, type GeminiTool } from './gemini.js';
@@ -195,6 +195,15 @@ export interface AssistantOptions {
   timeoutMs?: number;
   maxRequestsPerSession?: number;
   maxToolRounds?: number;
+  /** Durée maximale d'une dictée, en secondes. */
+  voiceMaxSeconds?: number;
+}
+
+/** WAV PCM 16 bits : 44 octets d'en-tête, puis les échantillons. Renvoie la durée en secondes, ou null si ce n'est pas un WAV lisible. */
+export function wavSeconds(buf: Buffer): number | null {
+  if (buf.length < 44 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return null;
+  const byteRate = buf.readUInt32LE(28);
+  return byteRate > 0 ? (buf.length - 44) / byteRate : null;
 }
 
 export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOptions) {
@@ -204,10 +213,42 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
   /** Compteur par utilisateur depuis le démarrage du serveur (limite de consommation). */
   const used = new Map<string, number>();
 
+  const voiceMaxSeconds = opts.voiceMaxSeconds ?? 30;
+  const voice = () => ({ available: !!opts.model?.transcribe, maxSeconds: voiceMaxSeconds });
   const status = (): AssistantStatus =>
     opts.model
-      ? { configured: true, provider: opts.model.provider, model: opts.model.model, reason: null }
-      : { configured: false, provider: null, model: null, reason: opts.disabledReason ?? 'Assistant IA non configuré sur ce serveur.' };
+      ? { configured: true, provider: opts.model.provider, model: opts.model.model, reason: null, voice: voice() }
+      : { configured: false, provider: null, model: null, reason: opts.disabledReason ?? 'Assistant IA non configuré sur ce serveur.', voice: voice() };
+
+  /**
+   * Dictée : un court enregistrement WAV est transcrit par le modèle configuré, puis jeté. Rien n'est stocké ni journalisé
+   * (ni l'audio, ni le texte). Le texte revient à l'utilisateur, qui le vérifie avant de l'envoyer comme une question écrite.
+   */
+  ctx.app.post('/api/assistant/transcribe', { bodyLimit: 4 * 1024 * 1024 }, async (req): Promise<TranscriptionReply> => {
+    const u = await ctx.currentUser(req);
+    const model = opts.model;
+    if (!model?.transcribe) throw new HttpError(503, 'VOICE_DISABLED', 'Dictée indisponible : l’assistant IA n’est pas configuré sur ce serveur. Utilisez le texte.');
+    const body = parse(z.object({ mimeType: z.literal('audio/wav'), audio: z.string().min(100, 'Enregistrement vide').max(3_600_000, 'Enregistrement trop long').regex(/^[A-Za-z0-9+/]+=*$/, 'Enregistrement illisible') }), req.body);
+    const seconds = wavSeconds(Buffer.from(body.audio, 'base64'));
+    if (seconds === null) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { audio: 'Enregistrement illisible (WAV attendu)' } });
+    if (seconds > voiceMaxSeconds + 1) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { audio: `Enregistrement limité à ${voiceMaxSeconds} secondes` } });
+    if (seconds < 0.3) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { audio: 'Enregistrement trop court' } });
+    const n = used.get(u.id) ?? 0;
+    if (n >= maxRequests) throw new HttpError(429, 'AI_QUOTA', `Limite de ${maxRequests} demandes à l’assistant IA atteinte pour cette session. Utilisez le texte.`);
+    used.set(u.id, n + 1);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const text = (await model.transcribe({ audioBase64: body.audio, mimeType: body.mimeType, signal: ac.signal })).slice(0, 600);
+      await ctx.audit(ctx.db, u, 'ASSISTANT_TRANSCRIBE', 'assistant', model.model, { seconds: Math.round(seconds), chars: text.length });
+      return { text, provider: `${model.provider} (${model.model})`, notice: 'Transcription automatique : relisez-la avant de l’envoyer. L’enregistrement n’est pas conservé.' };
+    } catch (e) {
+      await ctx.audit(ctx.db, u, 'ASSISTANT_TRANSCRIBE_FAILED', 'assistant', model.model, { code: e instanceof GeminiError ? e.code : 'ERROR' });
+      throw new HttpError(502, 'VOICE_FAILED', `${e instanceof GeminiError ? e.message : 'La transcription a échoué.'} Utilisez le texte.`);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 
   ctx.app.get('/api/assistant/status', async (req) => {
     await ctx.currentUser(req);

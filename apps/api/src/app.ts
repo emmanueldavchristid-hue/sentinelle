@@ -73,7 +73,8 @@ export async function buildApp(opts: AppOptions) {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Frame-Options', 'DENY');
-    reply.header('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+    // Le microphone n'est utilisé que par la dictée, sur action explicite de l'utilisateur.
+    reply.header('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
     reply.header(
       'Content-Security-Policy',
       "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",

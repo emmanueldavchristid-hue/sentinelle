@@ -25,6 +25,8 @@ Ce script correspond au parcours d'acceptation en 16 étapes du brief, rejoué a
 | 2:35 | Taper **Quel traitement dois-je lui donner ?** (IA activée) | L'assistant refuse : ni diagnostic ni prescription. Il ne remplace ni l'observation du terrain ni le professionnel de santé animale. |
 | 2:50 | « Changer de rôle » → Vétérinaire → Signalements (facultatif) | Le vétérinaire autorisé retrouve la même observation et garde sa console d'enquête. Limites et suite. |
 
+Variante vocale (IA activée, micro autorisé dans le navigateur) : à 1:20, cliquer **Dicter**, dire « Ajoute une observation sur B zéro dix-sept : elle mange moins depuis ce matin », cliquer **Arrêter et transcrire**, relire le texte, puis **Demander**. À n'utiliser en public qu'après un essai concluant avec le micro de la salle.
+
 Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier ? », « Montre-moi B-017 », « Quelles informations manquent ? », « Ajoute une observation sur B-017 : … », « Pourquoi ta réponse a changé ? », « Quelle est la situation de mon élevage ? ». Avec l'IA, les formulations libres fonctionnent aussi.
 
 ## Secours
@@ -38,7 +40,7 @@ Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier
 
 ## Limites à annoncer
 - Données synthétiques ; aucune intégration réelle ; aucun capteur ; aucune donnée en temps réel.
-- Pas de voix, pas de lots (volailles), pas de recherche documentaire dans cette version.
+- Voix : dictée d'une phrase (transcrite puis relue), pas de conversation parlée en direct. Pas de lots (volailles), pas de recherche documentaire dans cette version.
 - Sélecteur de rôle = mode démonstration, pas une authentification.
 - L'assistant ne voit que ce qui est enregistré. Une absence d'observation n'est pas un bon état de santé.
 - Sur le palier gratuit de Google, le contenu envoyé au modèle peut servir à améliorer ses produits : acceptable avec des données synthétiques, à revoir avant toute donnée réelle.

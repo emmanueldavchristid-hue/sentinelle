@@ -4,6 +4,7 @@ import { api, ApiFailure, errorMessage, NetworkError } from '../api';
 import { enqueueObservation } from '../local';
 import { go, useApp } from '../state';
 import { Constellation } from '../farm/Constellation';
+import { canSpeak, Dictation, speak, stopSpeaking } from '../farm/Voice';
 import { DraftCard, describeDraft, EvidenceDialog, fmtInstant, fmtState, ResultView, SourceChip, Timeline, type DraftValues } from '../farm/parts';
 import { conversation, draftOf, firstResult, refsOf, resultDigest, resultKey, resultSummary, session as farmSession, useExchanges, useFresh, useWrites, type Exchange } from '../farm/store';
 
@@ -93,6 +94,25 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
   const s = situation.data?.data ?? null;
   const offline = connection === 'offline';
   const assistant = health?.assistant;
+  const [dictated, setDictated] = useState<string | null>(null);
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  useEffect(() => () => void stopSpeaking(), []);
+  const onDictated = useCallback((t: string) => {
+    setText(t);
+    setDictated(t);
+    inputRef.current?.focus();
+  }, []);
+  /** Lecture à voix haute d'une réponse par la voix de synthèse de l'appareil (aucun service externe). */
+  const listen = (ex: Exchange) => {
+    if (speakingId === ex.id) {
+      stopSpeaking();
+      return setSpeakingId(null);
+    }
+    const said = (ex.reply?.text ?? ex.reply?.results[0]?.statements.slice(0, 5).map((st) => st.text).join(' ') ?? '').replace(/\[(?:OBS|REC|TASK|ANIMAL|SITE):[^\]]+\]/g, '').replace(/\s+/g, ' ');
+    if (!said.trim()) return;
+    setSpeakingId(ex.id);
+    speak(said, () => setSpeakingId((id) => (id === ex.id ? null : id)));
+  };
 
   const ask = useCallback(
     async (question: string) => {
@@ -102,6 +122,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
       const all = conversation.get();
       conversation.add(ex);
       setText('');
+      setDictated(null);
       // Dernière réponse mise à jour : ses deux états servent à « Pourquoi ta réponse a changé ? ».
       const updated = all.find((e) => e.update && firstResult(e));
       const compare = updated ? { from: updated.update!.previousAsOf, to: firstResult(updated)!.asOf } : undefined;
@@ -358,7 +379,11 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
               value={text}
               maxLength={600}
               placeholder="Qu’est-ce qui a changé depuis hier ?"
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                if (!e.target.value) setDictated(null);
+              }}
+              aria-describedby={dictated ? 'dictated-hint' : undefined}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -370,6 +395,21 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
               Demander
             </button>
           </form>
+          {dictated && text && (
+            <p id="dictated-hint" className="mt-1.5 text-[14px] text-laterite">
+              <b>Texte dicté, transcrit automatiquement.</b> Relisez-le, corrigez-le si besoin, puis « Demander ».
+            </p>
+          )}
+          <div className="mt-2.5">
+            <Dictation
+              session={session}
+              available={!!assistant?.voice?.available}
+              maxSeconds={assistant?.voice?.maxSeconds ?? 30}
+              offline={offline}
+              unavailableReason="Dictée indisponible : la transcription passe par l’assistant IA, qui n’est pas configuré sur ce serveur. Le texte permet tout le parcours."
+              onText={onDictated}
+            />
+          </div>
           <div className="mt-2.5 flex flex-wrap gap-2">
             {QUICK.map((q) => (
               <button key={q} type="button" className="v-chip" onClick={() => ask(q)}>
@@ -418,6 +458,11 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
                   {ex.reply && (
                     <div className="mt-3 space-y-3">
                       <p className="v-notice">{ex.reply.notice}</p>
+                      {canSpeak() && (ex.reply.text || ex.reply.results.length > 0) && (
+                        <button type="button" className="v-chip" aria-pressed={speakingId === ex.id} onClick={() => listen(ex)} title="Voix de synthèse de cet appareil, sans service externe">
+                          {speakingId === ex.id ? '■ Arrêter la lecture' : '▶ Écouter la réponse'}
+                        </button>
+                      )}
                       {ex.update && (
                         <div className="v-update">
                           <p className="v-field-flag text-laterite">Réponse mise à jour</p>

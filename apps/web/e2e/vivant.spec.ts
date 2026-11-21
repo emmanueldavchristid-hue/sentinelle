@@ -24,6 +24,9 @@ test('boucle de preuve vivante : question, sources, fiche, brouillon, confirmati
   await expect(page).toHaveTitle(/Mon élevage aujourd’hui · Sentinelle Vivant \(démonstrateur\)/);
   await expect(page.getByRole('group', { name: 'Situation enregistrée' })).toContainText('8');
   await expect(talk).toContainText('Assistant IA non configuré');
+  // Sans assistant IA, la dictée est annoncée indisponible (pas de bouton factice) et le texte reste l'accès complet.
+  await expect(talk.getByRole('button', { name: 'Dicter' })).toBeDisabled();
+  await expect(talk).toContainText('Dictée indisponible : la transcription passe par l’assistant IA');
   expect(await countSinceYesterday()).toBe(5);
 
   // 2 à 4. « Qu'est-ce qui a changé depuis hier ? » : lecture des événements réels, réponse avec sources.

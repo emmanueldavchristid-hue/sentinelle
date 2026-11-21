@@ -1,3 +1,5 @@
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 /**
@@ -20,7 +22,21 @@ export default defineConfig({
     ...(executablePath ? { launchOptions: { executablePath, args: ['--no-sandbox'] } } : { channel: process.env.PW_CHANNEL || undefined }),
   },
   projects: [
-    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec/, use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec/, use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    // Dictée avec un faux microphone (fichier WAV de synthèse) et un vrai appel de transcription : seulement si VOIX=1.
+    {
+      name: 'voix',
+      testMatch: /voix\.spec/,
+      use: {
+        ...devices['Desktop Chrome'],
+        permissions: ['microphone'],
+        launchOptions: {
+          ...(executablePath ? { executablePath } : {}),
+          args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-b017.wav')}`, ...(executablePath ? ['--no-sandbox'] : [])],
+        },
+        ...(executablePath ? { channel: undefined } : {}),
+      },
+    },
     // Capture réelle du parcours (vidéo) : ne s'exécute que si CAPTURE=1 (voir capture.spec.ts), sinon elle est ignorée.
     { name: 'capture', testMatch: /capture\.spec/, use: { ...devices['Desktop Chrome'], ...(executablePath ? { channel: undefined } : {}) } },
     // Mode authentifié (DEMO_MODE=false) : serveur distinct, compte créé par le script CLI. Commande shell POSIX : ignoré sous Windows.
@@ -35,7 +51,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 60_000,
       // ASSISTANT_AI=off : les tests ne dépendent jamais d'un service d'IA externe (lecture directe des données).
-      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: process.env.CAPTURE_AI === 'on' ? 'on' : 'off' },
+      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: process.env.CAPTURE_AI === 'on' || process.env.VOIX === '1' ? 'on' : 'off' },
     },
     ...(process.platform === 'win32'
       ? []

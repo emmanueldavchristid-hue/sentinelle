@@ -20,6 +20,7 @@ const app = await buildApp({
     timeoutMs: config.assistantTimeoutMs,
     maxRequestsPerSession: config.assistantMaxRequestsPerSession,
     maxToolRounds: config.assistantMaxToolRounds,
+    voiceMaxSeconds: config.voiceMaxSessionSeconds,
   },
   db,
   demoMode: config.demoMode,

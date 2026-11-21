@@ -256,6 +256,72 @@ describe('Brouillon demandé par le modèle : ses propositions sont recoupées a
   });
 });
 
+describe('Dictée : relais serveur, enregistrement court, rien de conservé', () => {
+  /** WAV PCM 16 bits, 16 kHz, mono, silence de la durée demandée. */
+  const wav = (seconds: number) => {
+    const data = Buffer.alloc(Math.round(seconds * 32_000));
+    const head = Buffer.alloc(44);
+    head.write('RIFF', 0, 'ascii');
+    head.writeUInt32LE(36 + data.length, 4);
+    head.write('WAVEfmt ', 8, 'ascii');
+    head.writeUInt32LE(16, 16);
+    head.writeUInt16LE(1, 20);
+    head.writeUInt16LE(1, 22);
+    head.writeUInt32LE(16_000, 24);
+    head.writeUInt32LE(32_000, 28);
+    head.writeUInt16LE(2, 32);
+    head.writeUInt16LE(16, 34);
+    head.write('data', 36, 'ascii');
+    head.writeUInt32LE(data.length, 40);
+    return Buffer.concat([head, data]).toString('base64');
+  };
+  const post = (app: Awaited<ReturnType<typeof buildApp>>, payload: unknown, headers: Record<string, string> = FARMER) => app.inject({ method: 'POST', url: '/api/assistant/transcribe', headers, payload: payload as object });
+  const voiceModel = (transcribe: NonNullable<AssistantModel['transcribe']>): AssistantModel => ({ provider: 'Faux modèle', model: 'test', runWithTools: async () => ({ text: '', calls: [] }), transcribe });
+
+  it('sans assistant configuré : 503 lisible, et l’état annonce la dictée indisponible', async () => {
+    const app = await buildApp({ db, demoMode: true });
+    const r = await post(app, { mimeType: 'audio/wav', audio: wav(1) });
+    expect(r.statusCode).toBe(503);
+    expect(r.json().message).toMatch(/Dictée indisponible.*Utilisez le texte/);
+    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: false, maxSeconds: 30 });
+    await app.close();
+  });
+
+  it('transcrit un enregistrement court et rend le texte à relire ; ni l’audio ni le texte ne sont journalisés', async () => {
+    let got: { mimeType: string; size: number } | null = null;
+    const app = await buildApp({ db, demoMode: true, assistant: { voiceMaxSeconds: 10, model: voiceModel(async (i) => ((got = { mimeType: i.mimeType, size: i.audioBase64.length }), 'Ajoute une observation sur B-017. Elle mange moins depuis ce matin.')) } });
+    const r = await post(app, { mimeType: 'audio/wav', audio: wav(2) });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ text: 'Ajoute une observation sur B-017. Elle mange moins depuis ce matin.', provider: 'Faux modèle (test)' });
+    expect(r.json().notice).toMatch(/relisez-la.*n’est pas conservé/);
+    expect(got).toMatchObject({ mimeType: 'audio/wav' });
+    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: true, maxSeconds: 10 });
+    const logged = (await db.query<{ detail: unknown }>(`SELECT detail FROM audit_events WHERE action = 'ASSISTANT_TRANSCRIBE' ORDER BY id DESC LIMIT 1`)).rows[0]!.detail;
+    expect(JSON.stringify(logged)).not.toMatch(/mange moins|UklGR/);
+    // Le texte transcrit suit le parcours écrit : il ne produit qu'un brouillon.
+    const direct = await buildApp({ db, demoMode: true });
+    const draft = (await ask(direct, { text: r.json().text })).body.results.find((x) => x.tool === 'prepare_observation') as ToolResult<ObservationDraftData>;
+    expect(draft.data.animal.value).toBe('B-017');
+    expect(draft.data.note.value).toBe('Elle mange moins depuis ce matin.');
+    await direct.close();
+    await app.close();
+  });
+
+  it('entrées refusées : trop long, trop court, pas un WAV, autre format, non connecté ; panne du fournisseur dite clairement', async () => {
+    const app = await buildApp({ db, demoMode: true, assistant: { voiceMaxSeconds: 5, model: voiceModel(async () => { throw new GeminiError(503, 'UNAVAILABLE', 'Service Gemini indisponible (503).'); }) } });
+    expect((await post(app, { mimeType: 'audio/wav', audio: wav(8) })).json().fields.audio).toMatch(/limité à 5 secondes/);
+    expect((await post(app, { mimeType: 'audio/wav', audio: wav(0.1) })).statusCode).toBe(400);
+    expect((await post(app, { mimeType: 'audio/wav', audio: Buffer.alloc(4000, 7).toString('base64') })).json().fields.audio).toMatch(/WAV attendu/);
+    expect((await post(app, { mimeType: 'audio/webm', audio: wav(1) })).statusCode).toBe(400);
+    expect((await post(app, { mimeType: 'audio/wav', audio: 'pas du base64 !' })).statusCode).toBe(400);
+    expect((await post(app, { mimeType: 'audio/wav', audio: wav(1) }, {})).statusCode).toBe(401);
+    const down = await post(app, { mimeType: 'audio/wav', audio: wav(1) });
+    expect(down.statusCode).toBe(502);
+    expect(down.json().message).toMatch(/Service Gemini indisponible.*Utilisez le texte/);
+    await app.close();
+  });
+});
+
 describe('Client Gemini (format des requêtes vérifié contre un faux serveur HTTP ; aucun appel réel à Google)', () => {
   let server: Server;
   let base = '';
@@ -307,6 +373,20 @@ describe('Client Gemini (format des requêtes vérifié contre un faux serveur H
     expect(second.contents[2]!.parts[0]).toMatchObject({ thoughtSignature: 'signature-opaque', functionCall: { name: 'get_situation' } });
     expect(second.contents[3]!.parts[0]).toEqual({ functionResponse: { name: 'get_situation', response: { result: { ok: true } }, id: 'appel-1' } });
     expect(second.systemInstruction).toEqual({ parts: [{ text: 'S' }] });
+  });
+
+  it('transcription : audio envoyé en « inlineData », clé en en-tête, texte rendu sans les parties de raisonnement', async () => {
+    const before = seen.length;
+    const m = geminiModel({ apiKey: FAKE_KEY, model: 'modele-a', baseUrl: base });
+    // Le faux serveur répond « functionCall » tant qu'aucune réponse de fonction n'est présente : la transcription n'en lit que le texte.
+    const text = await m.transcribe!({ audioBase64: 'QUJD', mimeType: 'audio/wav', signal: new AbortController().signal });
+    expect(text).toBe('');
+    const sent = seen[before]!;
+    expect(sent.key).toBe(FAKE_KEY);
+    expect(sent.url).toBe('/v1beta/models/modele-a:generateContent');
+    const parts = (sent.body as { contents: { parts: Record<string, unknown>[] }[] }).contents[0]!.parts;
+    expect(parts[1]).toEqual({ inlineData: { mimeType: 'audio/wav', data: 'QUJD' } });
+    expect(String(parts[0]!.text)).toMatch(/Transcris mot pour mot/);
   });
 
   it('liste les modèles disponibles', async () => {

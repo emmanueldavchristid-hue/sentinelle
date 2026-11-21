@@ -53,7 +53,8 @@ export const config = {
   assistantTimeoutMs: int(process.env.ASSISTANT_TIMEOUT_MS, 20_000, 2_000, 120_000),
   assistantMaxRequestsPerSession: int(process.env.ASSISTANT_MAX_REQUESTS_PER_SESSION, 40, 1, 1000),
   assistantMaxToolRounds: int(process.env.ASSISTANT_MAX_TOOL_ROUNDS, 4, 1, 8),
-  voiceMaxSessionSeconds: int(process.env.VOICE_MAX_SESSION_SECONDS, 120, 10, 900),
+  /** Durée maximale d'une dictée (un enregistrement court, transcrit puis jeté). */
+  voiceMaxSessionSeconds: int(process.env.VOICE_MAX_SESSION_SECONDS, 30, 5, 60),
 };
 
 export interface AssistantConfigReport {
