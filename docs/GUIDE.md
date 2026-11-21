@@ -22,8 +22,19 @@ Ouvrir **http://localhost:3000**. Au premier démarrage, la base (PostgreSQL emb
 
 ## 3. Utilisation
 
+### 3.0 Mon élevage aujourd’hui (SENTINELLE VIVANT, branche `sentinelle-vivant`)
+L’application s’ouvre sur cet écran avec l’éleveur de démonstration. Il réunit :
+- le **registre** : ce qui est enregistré, ce qui a été reçu depuis hier, ce qui reste à compléter, la dernière réception par le serveur (chaque case pose la question correspondante) ;
+- la **constellation** : sites, animaux avec une présence ouverte, déplacements enregistrés ; vue « Liste » équivalente, seule vue sur téléphone ;
+- la **chronologie**, avec pour chaque événement sa date, sa saisie et sa réception ;
+- **Parler à mon élevage** : une question en texte, une réponse dont chaque phrase porte sa nature (fait enregistré, résultat calculé, donnée absente, suggestion) et ses sources cliquables.
+
+Ajouter une observation : écrire « Ajoute une observation sur B-017 : … » ou cliquer « Ajouter une observation ». Un **brouillon** apparaît ; rien n’est enregistré avant « Confirmer et enregistrer » ; le **reçu** vient du serveur. Reposer ensuite la même question montre la réponse mise à jour, et « Pourquoi ta réponse a changé ? » montre l’enregistrement ajouté entre les deux états.
+
+Sans assistant IA configuré, quelques formulations sont reconnues par des règles fixes (elles sont proposées à l’écran) et la saisie manuelle reste complète. Configuration de l’assistant : § 5.
+
 ### 3.1 Choisir un rôle (mode démonstration)
-L’écran d’accueil propose trois comptes fictifs : agent de terrain, vétérinaire enquêteur, vétérinaire d’une autre organisation (pour montrer l’isolation). « Changer de rôle » efface les données locales de l’utilisateur ; s’il reste des déclarations non transmises, une confirmation est demandée.
+Accessible par « Changer de rôle » ou l’adresse `/#/roles`. L’écran propose quatre comptes fictifs (éleveur, agent de terrain, vétérinaire enquêteur, vétérinaire d’une autre organisation, pour montrer l’isolation). « Changer de rôle » efface les données locales de l’utilisateur ; s’il reste des déclarations non transmises, une confirmation est demandée.
 
 ### 3.2 Agent de terrain
 1. **Rechercher** un animal par identifiant (ex. B-017), ou **scanner son QR code** si le navigateur le permet (Chrome/Edge sur Android). Le QR n’est qu’un raccourci : il ne prouve pas l’identité de l’animal.
@@ -62,6 +73,20 @@ Voir [DEMO.md](DEMO.md) : script de 3 minutes, préparation, solutions de secour
 ## 5. Intelligence artificielle (facultative)
 
 Sans configuration, l’IA est **désactivée** et tout fonctionne : saisie manuelle complète, synthèse déterministe. Deux fonctions utilisent l’IA si elle est activée : l’aide à la saisie d’une observation et la reformulation de la synthèse d’enquête. Le moteur d’analyse, lui, n’utilise **jamais** l’IA.
+
+### Assistant « Parler à mon élevage » (Gemini)
+Cet assistant est distinct des deux fonctions ci-dessus. Il se configure dans un fichier local, jamais versionné :
+
+1. Copier `.env.example` en `.env` dans le dossier `sentinelle` (à côté de `package.json`).
+2. Créer une clé dans Google AI Studio et l’écrire sur la ligne `GEMINI_API_KEY=` du fichier `.env`. Ne la coller nulle part ailleurs (ni conversation, ni capture, ni Git). Ne pas définir aussi `GOOGLE_API_KEY`.
+3. Lancer `pnpm assistant:check` : la commande liste les modèles réellement disponibles avec la clé, sans jamais afficher celle-ci.
+4. Recopier un nom de modèle sur la ligne `GEMINI_MODEL=`, relancer `pnpm assistant:check` (appel minimal puis appel de fonction), puis `pnpm demo`.
+
+Repères mesurés le 21/11/2026 avec la clé du projet : `gemini-3.5-flash-lite` répond en 1 à 6 secondes ; `gemini-3.6-flash` peut mettre près de 40 secondes ; `gemini-3.8-flash` et `gemini-4-hydrogen` renvoyaient « surchargé » (503). `GEMINI_FALLBACK_MODEL` désigne un modèle de secours en cas de 503. `ASSISTANT_AI=off` coupe l’assistant sans retirer la clé.
+
+À savoir : les appels sont décomptés du quota du projet Google rattaché à la clé ; vérifier sur la page des tarifs de Google que le modèle retenu est dans le palier gratuit, et que la facturation n’est pas activée par erreur. Sur le palier gratuit, le contenu envoyé peut servir à améliorer les produits de Google. Les questions et les résultats de lecture quittent donc l’ordinateur : n’y mettre que des données de démonstration.
+
+Garde-fous propres à cet assistant : il n’agit que par les fonctions de `apps/api/src/farm.ts` (aucun SQL libre, aucune écriture hors brouillon) ; un identifiant de source cité qui ne vient pas d’une lecture fait écarter la réponse ; délai maximal `ASSISTANT_TIMEOUT_MS`, nombre de demandes par session `ASSISTANT_MAX_REQUESTS_PER_SESSION` ; en cas d’échec, lecture directe des données, annoncée comme telle.
 
 ### Option A — modèle local gratuit (Ollama)
 1. Installer Ollama (https://ollama.com), puis : `ollama pull llama3.1` (ou un autre modèle).

@@ -135,6 +135,28 @@ describe('Mode IA : le modèle n’agit que par les fonctions validées', () => 
     await app.close();
   });
 
+  it('question de lecture reconnue : la lecture de référence est faite par le serveur, fournie au modèle, et présentée en premier', async () => {
+    let seen = '';
+    const app = await buildApp({
+      db,
+      demoMode: true,
+      assistant: {
+        model: scripted(async (i) => {
+          seen = i.user;
+          await i.callTool('get_situation', {}); // le modèle choisit un autre outil : la référence reste en tête
+          return { text: 'Cinq enregistrements ont été reçus depuis hier.', calls: [] };
+        }),
+      },
+    });
+    const { body } = await ask(app, { text: 'Qu’est-ce qui a changé depuis hier ?' });
+    expect(seen).toMatch(/Lecture déjà effectuée par le serveur pour cette question, fonction changes/);
+    expect(seen).toContain('REC:P8@2');
+    expect(body.mode).toBe('ai');
+    expect(body.results.map((r) => r.tool)).toEqual(['changes', 'situation']);
+    expect(body.results[0]!.params).toMatchObject({ sinceYesterday: true });
+    await app.close();
+  });
+
   it('écarte une réponse citant une source inexistante, et repasse en lecture directe', async () => {
     const app = await buildApp({ db, demoMode: true, assistant: { model: scripted(async () => ({ text: 'Voir [OBS:00000000-0000-4000-8000-00000000dead].', calls: [] })) } });
     const { body } = await ask(app, { text: 'Qu’est-ce qui a changé depuis hier ?' });
@@ -192,6 +214,45 @@ describe('Mode IA : le modèle n’agit que par les fonctions validées', () => 
     const n = (await db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM observations WHERE note = 'Se couche souvent'`)).rows[0]!.n;
     expect(n).toBe(0);
     await app.close();
+  });
+});
+
+describe('Brouillon demandé par le modèle : ses propositions sont recoupées avec la phrase de l’utilisateur', () => {
+  const scripted = (run: AssistantModel['runWithTools']): AssistantModel => ({ provider: 'Faux modèle', model: 'test', runWithTools: run });
+  const draftWith = async (text: string, args: Record<string, unknown>, contextAnimalId?: string) => {
+    const app = await buildApp({ db, demoMode: true, assistant: { model: scripted(async (i) => (await i.callTool('prepare_observation', args), { text: 'Brouillon préparé.', calls: [] })) } });
+    const { body } = await ask(app, { text, ...(contextAnimalId ? { contextAnimalId } : {}) });
+    await app.close();
+    return (body.results.find((r) => r.tool === 'prepare_observation') as ToolResult<ObservationDraftData>).data;
+  };
+  const today = new Date().toISOString().slice(0, 10);
+
+  it('« ce matin » : aucune heure n’est supposée, même si le modèle en propose une (cas réel constaté le 21/11 : 08:00)', async () => {
+    const d = await draftWith('Note que B-017 mange moins depuis ce matin', { animalId: 'B-017', note: 'mange moins depuis ce matin', date: today, time: '08:00' });
+    expect(d.eventTime.value).toEqual({ precision: 'DAY', date: today });
+    expect(d.eventTime.status).toBe('TO_CONFIRM');
+    expect(d.note.value).toBe('Mange moins depuis ce matin');
+    expect(d.animal).toMatchObject({ value: 'B-017', status: 'OK' });
+  });
+
+  it('une heure écrite par l’utilisateur est gardée ; une date proposée sans appui dans la phrase reste à confirmer, sans heure', async () => {
+    const written = await draftWith('B-017 a refusé de boire hier à 16h30', { animalId: 'B-017', note: 'a refusé de boire', date: today, time: '09:00' });
+    expect(written.eventTime.value?.precision).toBe('INSTANT');
+    expect((written.eventTime.value as { at: string }).at.slice(11, 16)).toBe('16:30');
+    expect(written.eventTime.status).toBe('OK');
+    const proposed = await draftWith('B-017 boite un peu', { animalId: 'B-017', note: 'boite un peu', date: today, time: '10:00' });
+    expect(proposed.eventTime.value).toEqual({ precision: 'DAY', date: today });
+    expect(proposed.eventTime.status).toBe('TO_CONFIRM');
+    expect(proposed.eventTime.message).toMatch(/proposée par l’assistant/);
+  });
+
+  it('animal ou lieu absents de la phrase : proposés par le modèle, donc signalés « à vérifier » ou écartés', async () => {
+    const d = await draftWith('Elle mange moins aujourd’hui', { animalId: 'B-071', siteId: 'A', note: 'mange moins' });
+    expect(d.animal).toMatchObject({ value: 'B-071', status: 'DEDUCED' });
+    expect(d.animal.message).toMatch(/n’est pas nommé dans votre phrase/);
+    expect(d.site).toMatchObject({ value: 'C', status: 'DEDUCED' }); // lieu actuel enregistré de B-071, pas le lieu avancé par le modèle
+    const namedSite = await draftWith('B-071 mange moins aujourd’hui au Marché M', { animalId: 'B-071', siteId: 'M', note: 'mange moins' });
+    expect(namedSite.site).toMatchObject({ value: 'M', status: 'OK' });
   });
 });
 

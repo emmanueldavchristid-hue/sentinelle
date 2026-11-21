@@ -1,0 +1,68 @@
+1
+00:00:00,500 --> 00:00:04,500
+Chaque jour, un élevage produit
+des informations :
+
+2
+00:00:04,500 --> 00:00:09,500
+une arrivée, une observation,
+une mesure, un déplacement.
+
+3
+00:00:10,500 --> 00:00:14,500
+Mais retrouver ce qui a changé
+et savoir d'où vient une réponse
+
+4
+00:00:14,500 --> 00:00:19,000
+reste une question essentielle.
+
+5
+00:00:21,000 --> 00:00:24,000
+Sentinelle Vivant relie la conversation
+
+6
+00:00:24,000 --> 00:00:27,500
+aux données enregistrées
+de l'exploitation.
+
+7
+00:00:40,000 --> 00:00:43,500
+Une nouvelle observation est confirmée.
+
+8
+00:00:45,500 --> 00:00:48,500
+Elle devient consultable.
+
+9
+00:00:51,000 --> 00:00:56,500
+Et lorsque la réponse change,
+vous pouvez voir pourquoi.
+
+10
+00:00:58,300 --> 00:01:02,000
+Chaque réponse distingue les faits,
+les calculs et ce qui manque.
+
+11
+00:01:02,200 --> 00:01:05,000
+L'assistant ne remplace
+ni l'observation du terrain,
+
+12
+00:01:05,000 --> 00:01:07,800
+ni le professionnel de santé animale.
+
+13
+00:01:08,300 --> 00:01:12,000
+Demain, des équipements autorisés
+pourront enrichir ce suivi.
+
+14
+00:01:12,300 --> 00:01:14,300
+La même exigence restera :
+
+15
+00:01:14,300 --> 00:01:16,800
+une donnée identifiable,
+une réponse explicable.

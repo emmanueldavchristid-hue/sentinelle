@@ -310,7 +310,15 @@ export const PrepareObservationSchema = z.object({
   note: z.string().trim().max(1000).optional(),
   /** Animal affiché à l'écran au moment de la demande (jamais retenu sans le signaler). */
   contextAnimalId: z.string().trim().max(40).optional(),
+  /**
+   * Vrai quand les champs ci-dessus viennent d'un modèle d'IA et non de l'utilisateur. Ils sont alors recoupés avec la phrase
+   * de l'utilisateur : ce qui n'y figure pas est signalé « proposé, à vérifier », et aucune heure n'est acceptée si elle n'y est pas écrite.
+   */
+  fromAssistant: z.boolean().optional(),
 });
+
+/** La phrase contient-elle une heure écrite (« 7h30 », « 16:05 », « 8 h ») ? */
+const hasWrittenHour = (text: string) => /\b\d{1,2}\s?(?:h|:)\s?\d{0,2}\b/i.test(text);
 
 // ---------- Lecture de la date dans une phrase (déterministe, sans IA) ----------
 
@@ -452,7 +460,8 @@ export function farmTools(db: Db) {
     const sites = await loadSites(db, u.org_id);
     const LIMIT = 200;
     const r = await eventsBetween(db, u.org_id, sites, { from, to, limit: LIMIT });
-    const sinceYesterday = !p.from;
+    // « Depuis hier » : période par défaut, ou la même période demandée explicitement (un modèle d'IA écrit parfois la date).
+    const sinceYesterday = !p.to && (!p.from || Date.parse(p.from) === Date.parse(startOfYesterday(asOf)));
     const head = sinceYesterday ? `Depuis hier (${fmt(from)})` : `Entre le ${fmtSec(from)} et le ${fmtSec(to)}`;
     const statements: Statement[] = r.counts.total
       ? [
@@ -698,7 +707,11 @@ export function farmTools(db: Db) {
     let chosen: AnimalMatch | null = null;
     if (resolved.length === 1) {
       chosen = resolved[0]!;
-      animalField = { value: chosen.id, status: 'OK', message: null };
+      const named = mentioned.some((m) => animalMatchKey(m) === animalMatchKey(chosen!.tag) || animalMatchKey(m) === animalMatchKey(chosen!.id));
+      animalField =
+        p.fromAssistant && !named
+          ? { value: chosen.id, status: 'DEDUCED', message: `${chosen.tag} n’est pas nommé dans votre phrase : il est proposé par l’assistant d’après la conversation. À vérifier.` }
+          : { value: chosen.id, status: 'OK', message: null };
     } else if (resolved.length > 1) {
       animalField = { value: null, status: 'AMBIGUOUS', message: 'Plusieurs animaux correspondent. Choisissez lequel avant d’enregistrer.', candidates: resolved.map((r) => ({ id: r.id, label: r.tag })) };
     } else if (!p.animalId && p.contextAnimalId) {
@@ -714,19 +727,33 @@ export function farmTools(db: Db) {
     // Lieu : explicite, sinon nommé dans le texte, sinon lieu actuel enregistré de l'animal (signalé comme déduit).
     let siteField: DraftField<string>;
     const named = [...sites.values()].filter((s) => text.toLowerCase().includes(s.name.toLowerCase()));
-    if (p.siteId) siteField = sites.has(p.siteId) ? { value: p.siteId, status: 'OK', message: null } : { value: null, status: 'MISSING', message: 'Lieu inconnu dans votre périmètre.' };
+    // Un lieu fourni par un modèle d'IA n'est retenu que s'il est nommé dans la phrase ; sinon on retombe sur les règles ci-dessous.
+    const siteGiven = p.siteId && !(p.fromAssistant && !named.some((s) => s.id === p.siteId)) ? p.siteId : undefined;
+    if (siteGiven) siteField = sites.has(siteGiven) ? { value: siteGiven, status: 'OK', message: null } : { value: null, status: 'MISSING', message: 'Lieu inconnu dans votre périmètre.' };
     else if (named.length === 1) siteField = { value: named[0]!.id, status: 'OK', message: null };
     else if (named.length > 1) siteField = { value: null, status: 'AMBIGUOUS', message: 'Plusieurs lieux sont nommés. Choisissez le lieu de l’observation.', candidates: named.map((s) => ({ id: s.id, label: s.name })) };
     else if (chosen?.currentSiteId) siteField = { value: chosen.currentSiteId, status: 'DEDUCED', message: `Lieu non précisé : ${siteName(sites, chosen.currentSiteId)}, lieu actuel enregistré de l’animal, est proposé. À vérifier.` };
     else siteField = { value: null, status: 'MISSING', message: chosen ? `Aucun lieu actuel n’est enregistré pour ${chosen.tag} : choisissez le lieu de l’observation.` : 'Choisissez le lieu de l’observation.' };
 
     let timeField: DraftField<TemporalValueDto>;
-    if (p.eventTime) {
+    // Date fournie par un modèle d'IA : la lecture par règles fixes de la phrase fait foi. À défaut, la proposition du modèle est
+    // gardée « à confirmer », et jamais avec une heure que l'utilisateur n'a pas écrite (aucune heure n'est supposée).
+    const fromText = p.fromAssistant ? parseEventTime(text, asOf) : null;
+    if (p.fromAssistant && (fromText!.value || !p.eventTime)) timeField = fromText!;
+    else if (p.fromAssistant && p.eventTime) {
+      const e = p.eventTime;
+      const kept: TemporalValueDto = e.precision === 'INSTANT' && !hasWrittenHour(text) ? { precision: 'DAY', date: e.at.slice(0, 10) } : e;
+      const future = kept.precision !== 'UNKNOWN' && bounds(kept as TemporalValue).min > Date.parse(asOf) + 5 * 60_000;
+      timeField = future
+        ? { value: null, status: 'MISSING', message: 'La date proposée par l’assistant est dans le futur : indiquez la date.' }
+        : { value: kept, status: 'TO_CONFIRM', message: 'Date proposée par l’assistant d’après votre phrase. À confirmer.' };
+    } else if (p.eventTime) {
       const future = p.eventTime.precision !== 'UNKNOWN' && bounds(p.eventTime as TemporalValue).min > Date.parse(asOf) + 5 * 60_000;
       timeField = future ? { value: null, status: 'MISSING', message: 'La date indiquée est dans le futur. Vérifiez la date.' } : { value: p.eventTime, status: 'OK', message: p.eventTime.precision === 'UNKNOWN' ? 'Date de l’événement déclarée inconnue.' : null };
     } else timeField = parseEventTime(text, asOf);
 
-    const noteText = (p.note ?? extractNote(text, [...new Set([...mentioned, ...(chosen ? [chosen.id, chosen.tag] : [])])])).trim();
+    const rawNote = (p.note ?? extractNote(text, [...new Set([...mentioned, ...(chosen ? [chosen.id, chosen.tag] : [])])])).trim();
+    const noteText = rawNote ? rawNote.charAt(0).toUpperCase() + rawNote.slice(1) : rawNote;
     const noteField: DraftField<string> = noteText.length >= 3 ? { value: noteText, status: 'OK', message: null } : { value: noteText || null, status: 'MISSING', message: 'Décrivez ce qui est constaté (3 caractères minimum), sans conclusion diagnostique.' };
 
     let possibleDuplicate: SourceRef | null = null;

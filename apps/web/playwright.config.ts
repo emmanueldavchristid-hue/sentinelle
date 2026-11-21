@@ -20,7 +20,9 @@ export default defineConfig({
     ...(executablePath ? { launchOptions: { executablePath, args: ['--no-sandbox'] } } : { channel: process.env.PW_CHANNEL || undefined }),
   },
   projects: [
-    { name: 'desktop', testIgnore: /auth\.spec/, use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec/, use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    // Capture réelle du parcours (vidéo) : ne s'exécute que si CAPTURE=1 (voir capture.spec.ts), sinon elle est ignorée.
+    { name: 'capture', testMatch: /capture\.spec/, use: { ...devices['Desktop Chrome'], ...(executablePath ? { channel: undefined } : {}) } },
     // Mode authentifié (DEMO_MODE=false) : serveur distinct, compte créé par le script CLI. Commande shell POSIX : ignoré sous Windows.
     ...(process.platform === 'win32'
       ? []
@@ -33,7 +35,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 60_000,
       // ASSISTANT_AI=off : les tests ne dépendent jamais d'un service d'IA externe (lecture directe des données).
-      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: 'off' },
+      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: process.env.CAPTURE_AI === 'on' ? 'on' : 'off' },
     },
     ...(process.platform === 'win32'
       ? []

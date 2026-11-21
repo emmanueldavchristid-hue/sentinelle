@@ -136,7 +136,7 @@ const TOOL_DECLARATIONS: GeminiTool[] = [
         siteId: { type: 'string', description: 'Identifiant du lieu, seulement si l’utilisateur l’a nommé' },
         note: { type: 'string', description: 'Ce qui est constaté, sans diagnostic, dans les mots de l’utilisateur' },
         date: { type: 'string', description: 'Jour de l’événement AAAA-MM-JJ, seulement s’il est certain' },
-        time: { type: 'string', description: 'Heure HH:MM (Abidjan), seulement si l’utilisateur l’a donnée' },
+        time: { type: 'string', description: 'Heure HH:MM (Abidjan), UNIQUEMENT si l’utilisateur a écrit une heure. « ce matin » ou « ce soir » ne sont pas des heures : ne mets rien.' },
         dateUnknown: { type: 'boolean', description: 'Vrai seulement si l’utilisateur dit ne pas connaître la date' },
       },
       required: ['note'],
@@ -175,7 +175,7 @@ async function callFarmTool(tools: FarmTools, u: User, input: AskInput, name: st
       let eventTime: unknown;
       if (args.dateUnknown === true) eventTime = { precision: 'UNKNOWN' };
       else if (date && isRealDate(date)) eventTime = time && /^\d{2}:\d{2}$/.test(time) ? { precision: 'INSTANT', at: `${date}T${time}:00.000Z` } : { precision: 'DAY', date };
-      return tools.prepareObservation(u, { text: input.text, animalId: str(args.animalId), siteId: str(args.siteId), note: str(args.note), eventTime, contextAnimalId: input.contextAnimalId });
+      return tools.prepareObservation(u, { text: input.text, animalId: str(args.animalId), siteId: str(args.siteId), note: str(args.note), eventTime, contextAnimalId: input.contextAnimalId, fromAssistant: true });
     }
     default:
       throw new HttpError(400, 'UNKNOWN_TOOL', `Fonction inconnue : ${name}`);
@@ -219,6 +219,12 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
     const input = parse(AskSchema, req.body);
     const model = opts.model;
     if (!model) return answerDirect(tools, u, input);
+    // « Pourquoi ta réponse a changé ? » avec deux états connus : la comparaison est un calcul, pas une formulation.
+    // Elle est faite directement, même quand l'IA est configurée, pour être exacte et reproductible.
+    if (input.compare && recognize(input.text) === 'why_changed') {
+      const r = await answerDirect(tools, u, input);
+      return { ...r, notice: 'Comparaison calculée directement à partir des deux états enregistrés, sans IA.' };
+    }
 
     const fallback = async (why: string): Promise<AssistantReply> => {
       const r = await answerDirect(tools, u, input);
@@ -229,13 +235,23 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
     used.set(u.id, n + 1);
 
     const results: ToolResult[] = [];
+    // Questions de lecture reconnues (changements, manques, situation) : le serveur fait lui-même la lecture de référence,
+    // toujours la même pour la même question, puis le modèle la formule. Deux réponses à la même question restent ainsi
+    // comparables (« Pourquoi ta réponse a changé ? ») quel que soit le choix d'outils du modèle, et un aller-retour est économisé.
+    // « situation » n'est retenue ici que sur un mot explicite : « aujourd'hui » ou « combien » seuls ne suffisent pas.
+    const intent = recognize(input.text);
+    const explicitSituation = intent === 'situation' && /(situation|resume|ou en est|etat des lieux|synthese)/.test(norm(input.text));
+    const reference = intent === 'changes' ? await tools.changes(u, {}) : intent === 'missing' ? await tools.missing(u) : explicitSituation ? await tools.situation(u) : null;
+    if (reference) results.push(reference);
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
       const out = await model.runWithTools({
         system: `${SYSTEM_PROMPT}\nInstant actuel du serveur : ${new Date().toISOString()}.${input.contextAnimalId ? `\nAnimal affiché à l'écran : ${input.contextAnimalId}.` : ''}${input.contextRef ? `\nSource sélectionnée à l'écran : ${input.contextRef}.` : ''}${input.compare ? `\nÉtats des deux dernières réponses à la même question : ${input.compare.from} puis ${input.compare.to}.` : ''}`,
         history: input.history ?? [],
-        user: input.text,
+        user: reference
+          ? `${input.text}\n\n[Lecture déjà effectuée par le serveur pour cette question, fonction ${reference.tool}. Réponds à partir d'elle ; n'appelle une autre fonction que si elle ne suffit pas.]\n${JSON.stringify(forModel(reference))}`
+          : input.text,
         tools: TOOL_DECLARATIONS,
         maxRounds,
         signal: ac.signal,
@@ -268,8 +284,8 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
         notice: ungrounded
           ? 'Texte formulé par l’IA sans lecture des données de l’exploitation : à prendre comme une suggestion, pas comme un fait.'
           : `Texte formulé par l’IA à partir de ${results.length > 1 ? `${results.length} lectures` : 'la lecture'} ci-dessous. Les faits et les sources viennent des données, pas du modèle.`,
-        // La lecture la plus précise (la dernière) est présentée en premier : c'est elle qui pilote l'écran.
-        results: [...results].reverse(),
+        // La lecture de référence d'abord ; sinon la plus précise (la dernière demandée par le modèle) pilote l'écran.
+        results: reference ? [reference, ...results.slice(1).reverse()] : [...results].reverse(),
         ungrounded,
         suggestions: SUGGESTIONS,
       };
