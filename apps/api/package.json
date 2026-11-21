@@ -14,7 +14,8 @@
     "db:restore": "tsx src/db-tools.ts restore",
     "user:list": "tsx src/users.ts list",
     "user:disable": "tsx src/users.ts disable",
-    "user:enable": "tsx src/users.ts enable"
+    "user:enable": "tsx src/users.ts enable",
+    "assistant:check": "tsx src/assistant-check.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.16",

@@ -15,7 +15,7 @@ import { Report } from './pages/report';
 interface DemoUser {
   id: string;
   name: string;
-  role: 'AGENT' | 'VET';
+  role: 'AGENT' | 'VET' | 'FARMER';
   org_id: string;
   org_name: string;
 }
@@ -32,7 +32,7 @@ function LoginForm() {
     if (!username.trim() || !password) return setError('Saisissez votre identifiant et votre mot de passe.');
     setBusy(true);
     try {
-      const u = await api<{ id: string; name: string; role: 'AGENT' | 'VET'; org_id: string; orgName: string }>('/api/auth/login', { method: 'POST', body: { username: username.trim(), password } });
+      const u = await api<{ id: string; name: string; role: 'AGENT' | 'VET' | 'FARMER'; org_id: string; orgName: string }>('/api/auth/login', { method: 'POST', body: { username: username.trim(), password } });
       setPassword('');
       login({ userId: u.id, name: u.name, role: u.role, orgId: u.org_id, orgName: u.orgName });
       go(u.role === 'AGENT' ? 'animaux' : 'signalements');

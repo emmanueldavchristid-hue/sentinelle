@@ -31,6 +31,8 @@ import { HttpError, parse, sha256, type User } from './http.js';
 import { findReplay, lock, requestHash, saveReplay } from './idempotency.js';
 import { type AuthConfig, registerAuth, sessionUser } from './auth.js';
 import { registerImport } from './import.js';
+import { registerFarm } from './farm.js';
+import { type AssistantOptions, registerAssistant } from './assistant.js';
 import { type StructuringProvider, type SummaryProvider, registerAssist, structuringFromLlm, summaryFromLlm } from './assist.js';
 import type { LlmClient } from './llm.js';
 
@@ -46,6 +48,8 @@ export interface AppOptions {
   structuringProvider?: StructuringProvider | null;
   summaryProvider?: SummaryProvider | null;
   aiLimits?: { timeoutMs?: number; maxCallsPerDay?: number };
+  /** Assistant « Parler à mon élevage » : modèle configuré côté serveur (absent = lecture directe, sans IA). */
+  assistant?: AssistantOptions;
 }
 
 export async function buildApp(opts: AppOptions) {
@@ -200,6 +204,8 @@ export async function buildApp(opts: AppOptions) {
   const ctx = { app, db, demoMode: opts.demoMode, currentUser, requireRole, audit: (q: Queryable, u: User | null, a: string, e: string, id: string, d?: unknown) => audit(q, u, a, e, id, d) };
   registerAuth(ctx, opts.auth);
   registerImport(ctx);
+  const farm = registerFarm(ctx);
+  const assistant = registerAssistant(ctx, farm, opts.assistant ?? { model: null });
   const llm = opts.llm ?? null;
   const assist = registerAssist(
     { ...ctx, getInvestigation },
@@ -216,6 +222,7 @@ export async function buildApp(opts: AppOptions) {
     demoMode: opts.demoMode,
     engineVersion: ENGINE_VERSION,
     ai: assist.status(),
+    assistant: assistant.status(),
     serverTime: new Date().toISOString(),
   }));
 
@@ -240,7 +247,7 @@ export async function buildApp(opts: AppOptions) {
       if (host !== req.headers.host) throw new HttpError(403, 'FORBIDDEN', 'Origine refusée');
     }
     const body = (req.body ?? {}) as { withObservation?: unknown };
-    await resetAndSeed(db, { withObservation: body.withObservation === true });
+    await resetAndSeed(db, { withObservation: body.withObservation === true, living: true });
     return { ok: true };
   });
 
@@ -316,6 +323,17 @@ export async function buildApp(opts: AppOptions) {
     // Rejeu (réponse perdue, double envoi) : on renvoie l'enregistrement existant, sans doublon.
     const existing = (await db.query('SELECT * FROM observations WHERE idempotency_key = $1 AND org_id = $2 AND author_id = $3 AND id = $4', [body.idempotencyKey, u.org_id, u.id, body.clientId])).rows[0];
     if (!existing) throw new HttpError(409, 'CONFLICT', 'Identifiant client déjà utilisé par une autre opération');
+    // Le reçu dit la vérité : un rejeu n'est un doublon que si le contenu est identique. Sinon rien n'est modifié et on le dit.
+    const same =
+      existing.animal_id === body.animalId &&
+      existing.location_id === body.locationId &&
+      existing.note === body.note &&
+      stableStringify(json(existing.event_time)) === stableStringify(body.eventTime);
+    if (!same) {
+      throw new HttpError(409, 'CONTENT_MISMATCH', 'Cette déclaration a déjà été reçue avec un contenu différent : rien n’a été modifié. Pour corriger, enregistrez une nouvelle observation.', {
+        observation: observationDto(existing),
+      });
+    }
     return reply.status(200).send({ duplicate: true, observation: observationDto(existing) });
   });
 

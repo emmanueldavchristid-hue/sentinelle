@@ -3,7 +3,7 @@ import type { ApiError } from '@sentinelle/contracts';
 export interface Session {
   userId: string;
   name: string;
-  role: 'AGENT' | 'VET';
+  role: 'AGENT' | 'VET' | 'FARMER';
   orgId: string;
   orgName: string;
 }

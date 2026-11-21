@@ -31,5 +31,5 @@ export interface User {
   id: string;
   org_id: string;
   name: string;
-  role: 'AGENT' | 'VET';
+  role: 'AGENT' | 'VET' | 'FARMER';
 }

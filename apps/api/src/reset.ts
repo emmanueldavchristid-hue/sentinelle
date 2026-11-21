@@ -10,6 +10,6 @@ if (!config.demoMode) {
 const withObservation = process.argv.includes('--avec-signalement');
 const db = await openDb({ databaseUrl: config.databaseUrl, dataDir: config.dataDir });
 await migrate(db);
-await resetAndSeed(db, { withObservation });
+await resetAndSeed(db, { withObservation, living: true });
 await db.close();
 console.log(`Données de démonstration réinitialisées${withObservation ? ' (avec le signalement B-017 déjà synchronisé)' : ''}.`);

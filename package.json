@@ -19,6 +19,7 @@
     "db:restore": "pnpm --filter @sentinelle/api db:restore",
     "user:list": "pnpm --filter @sentinelle/api user:list",
     "user:disable": "pnpm --filter @sentinelle/api user:disable",
-    "user:enable": "pnpm --filter @sentinelle/api user:enable"
+    "user:enable": "pnpm --filter @sentinelle/api user:enable",
+    "assistant:check": "pnpm --filter @sentinelle/api assistant:check"
   }
 }

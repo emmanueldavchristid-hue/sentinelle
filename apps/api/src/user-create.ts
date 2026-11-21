@@ -11,8 +11,8 @@ import { resetAndSeed } from './seed.js';
 const { values } = parseArgs({
   options: { id: { type: 'string' }, username: { type: 'string' }, name: { type: 'string' }, role: { type: 'string' }, org: { type: 'string' } },
 });
-if (!values.id || !values.username || !values.name || !values.org || (values.role !== 'AGENT' && values.role !== 'VET')) {
-  console.error('Usage : pnpm user:create --id ID --username IDENTIFIANT --name "Nom" --role AGENT|VET --org ORG-ID');
+if (!values.id || !values.username || !values.name || !values.org || (values.role !== 'AGENT' && values.role !== 'VET' && values.role !== 'FARMER')) {
+  console.error('Usage : pnpm user:create --id ID --username IDENTIFIANT --name "Nom" --role AGENT|VET|FARMER --org ORG-ID');
   process.exit(1);
 }
 const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });

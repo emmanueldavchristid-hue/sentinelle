@@ -124,7 +124,7 @@ export function registerAuth(ctx: Ctx, cfg: Partial<AuthConfig> = {}) {
 }
 
 /** Création ou mise à jour d'un compte (utilisée par le script CLI). */
-export async function upsertUser(db: Db, u: { id: string; username: string; name: string; role: 'AGENT' | 'VET'; orgId: string; password: string }) {
+export async function upsertUser(db: Db, u: { id: string; username: string; name: string; role: 'AGENT' | 'VET' | 'FARMER'; orgId: string; password: string }) {
   if (u.password.length < 12) throw new Error('Mot de passe trop court (12 caractères minimum)');
   const org = (await db.query('SELECT 1 FROM organizations WHERE id = $1', [u.orgId])).rows[0];
   if (!org) throw new Error(`Organisation inconnue : ${u.orgId}`);

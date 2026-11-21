@@ -3,12 +3,19 @@ import { formatInstant } from '@sentinelle/domain';
 import { go, useApp } from '../state';
 
 const NAV = {
+  FARMER: [
+    ['elevage', 'Mon élevage'],
+    ['animaux', 'Animaux'],
+    ['envois', 'Déclarations'],
+  ],
   AGENT: [
+    ['elevage', 'Mon élevage'],
     ['animaux', 'Rechercher'],
     ['envois', 'Déclarations'],
     ['taches', 'Vérifications'],
   ],
   VET: [
+    ['elevage', 'Mon élevage'],
     ['signalements', 'Signalements'],
     ['enquetes', 'Enquêtes'],
     ['import', 'Import'],

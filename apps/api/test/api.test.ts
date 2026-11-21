@@ -259,7 +259,10 @@ describe('Réinitialisation de démonstration', () => {
     expect((await app.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset', origin: 'https://evil.example', host: 'localhost' }, payload: {} })).statusCode).toBe(403);
     const r = await app.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset' }, payload: { withObservation: true } });
     expect(r.statusCode).toBe(200);
-    expect((await app.inject({ url: '/api/observations', headers: VET })).json()).toHaveLength(1);
+    // Le signalement B-017 du scénario, plus les 3 observations du jeu vivant (datées relativement au jour de la réinitialisation).
+    const afterReset = (await app.inject({ url: '/api/observations', headers: VET })).json() as { animalId: string }[];
+    expect(afterReset.filter((o) => o.animalId === 'B-017')).toHaveLength(1);
+    expect(afterReset).toHaveLength(4);
     const p6 = (await db.query<{ n: number }>("SELECT COUNT(*)::int AS n FROM record_revisions WHERE record_id = 'P6'")).rows[0]!.n;
     expect(p6).toBe(1);
   });
