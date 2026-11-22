@@ -81,13 +81,13 @@ class LiveConversation {
     this.setPhase('listening');
   }
 
-  async start(session: Session | null, contextAnimalId: string | null) {
+  async start(session: Session | null, contextAnimalId: string | null, incident: { id: string; speak: boolean } | null = null) {
     this.setPhase('connecting');
     // La connexion s'ouvre en même temps que le micro, pour ne pas faire attendre.
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/assistant/live`);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
-    ws.onopen = () => this.send({ type: 'start', demoUser: session?.userId, contextAnimalId: contextAnimalId ?? undefined });
+    ws.onopen = () => this.send({ type: 'start', demoUser: session?.userId, contextAnimalId: contextAnimalId ?? undefined, ...(incident ? { contextIncidentId: incident.id, speakIncident: incident.speak } : {}) });
     ws.onmessage = (ev: MessageEvent<string | ArrayBuffer>) => {
       if (typeof ev.data !== 'string') return this.play(ev.data);
       let m: LiveServerMessage;
@@ -254,6 +254,8 @@ export interface LiveHandle {
   /** Transmet un message à la conversation ouverte (résultat d'une confirmation, action faite à l'écran). */
   send: (m: LiveClientMessage) => void;
   active: () => boolean;
+  /** Ouvre une conversation sur un incident : l'assistant commence par le résumer à voix haute. */
+  startOnIncident: (incidentId: string) => void;
 }
 
 const MicIcon = () => (
@@ -267,6 +269,7 @@ const MicIcon = () => (
 export function LiveTalk({
   session,
   animalId,
+  incidentId,
   offline,
   maxSeconds,
   quiet,
@@ -277,6 +280,8 @@ export function LiveTalk({
 }: {
   session: Session | null;
   animalId: string | null;
+  /** Incident ouvert à l'écran : l'assistant sait de quoi on parle sans qu'on le lui raconte. */
+  incidentId: string | null;
   offline: boolean;
   maxSeconds: number;
   /** Masque la ligne d'explication au repos (affichage simple). */
@@ -296,7 +301,6 @@ export function LiveTalk({
   const support = liveUnavailable();
   const blocked = support ?? (offline || isSimulatedOffline() ? 'Conversation en direct indisponible hors connexion. Le texte reste utilisable.' : null);
 
-  useImperativeHandle(handle, () => ({ send: (m) => conv.current?.send(m), active: () => conv.current !== null }), []);
 
   // Quitter l'écran ferme toujours le micro et la conversation.
   useEffect(
@@ -314,8 +318,14 @@ export function LiveTalk({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase === 'idle']);
 
-  const start = useCallback(() => {
-    if (conv.current) return;
+  const start = useCallback((speakIncident?: string) => {
+    if (conv.current) {
+      if (!speakIncident) return;
+      // Une conversation est déjà ouverte : elle est refermée pour en ouvrir une sur l'incident demandé.
+      const previous = conv.current;
+      conv.current = null;
+      previous.stop();
+    }
     setNote(null);
     setElapsed(0);
     const c = new LiveConversation({
@@ -331,8 +341,12 @@ export function LiveTalk({
     });
     conv.current = c;
     cb.current.onActive(true);
-    void c.start(session, animalId);
-  }, [session, animalId]);
+    const incident = speakIncident ?? incidentId;
+    void c.start(session, animalId, incident ? { id: incident, speak: !!speakIncident } : null);
+  }, [session, animalId, incidentId]);
+  const startRef = useRef(start);
+  startRef.current = start;
+  useImperativeHandle(handle, () => ({ send: (m) => conv.current?.send(m), active: () => conv.current !== null, startOnIncident: (id) => startRef.current(id) }), []);
 
   const active = phase !== 'idle';
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -361,6 +375,7 @@ export function LiveTalk({
           data-speaking={phase === 'speaking' ? 'true' : undefined}
           data-busy={phase === 'connecting' ? 'true' : undefined}
           onClick={() => (active ? conv.current?.stop() : start())}
+          data-testid="live-talk"
           disabled={!active && !!blocked}
           aria-describedby="live-status"
           aria-label={label}

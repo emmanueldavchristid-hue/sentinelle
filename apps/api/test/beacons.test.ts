@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AssistantReply, Beacon, BeaconsData, SituationData, SourceData, ToolResult } from '@sentinelle/contracts';
+import type { AssistantReply, Beacon, BeaconsData, IncidentData, SituationData, SourceData, ToolResult } from '@sentinelle/contracts';
 import { buildApp } from '../src/app.js';
 import { recognize } from '../src/assistant.js';
 import { zoneOf } from '../src/beacons.js';
@@ -180,5 +180,102 @@ describe('Balise de démonstration : association, mesures, alerte, preuve', () =
   it('la réinitialisation de la démonstration efface les balises', async () => {
     await resetAndSeed(db, { living: true });
     expect((await list()).data.beacons).toEqual([]);
+  });
+});
+
+describe('Incident d’éloignement : un par épisode, avec ses faits, relu avec l’état actuel', () => {
+  let id = '';
+  let token = '';
+  let first = '';
+  const incident = async (which = 'latest', headers = FARMER) => app.inject({ url: `/api/farm/incidents/${which}`, headers });
+  const text = (r: ToolResult<IncidentData | null>) => r.statements.map((s) => s.text).join(' | ');
+  const step = async (reading: Record<string, unknown>) => {
+    await wait(950); // une mesure par seconde au plus
+    expect((await send(id, token, reading)).statusCode).toBe(201);
+  };
+
+  it('sans incident : le dit, sans rien inventer', async () => {
+    await app.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset' }, payload: {} });
+    const r = (await incident()).json() as ToolResult<IncidentData | null>;
+    expect(r.tool).toBe('incident');
+    expect(r.data).toBeNull();
+    expect(r.statements[0]).toMatchObject({ nature: 'MISSING', text: 'Aucun incident de balise n’est enregistré.' });
+  });
+
+  it('dans la zone ou incertain : aucun incident ; hors zone : un incident, et un seul pour tout l’épisode', async () => {
+    ({ id, token } = (await pair({ label: 'Poulet A', animalId: 'B-071', radiusM: 20 })).json());
+    await step({ distanceM: 10, accuracyM: 3 });
+    await step({ distanceM: 25, accuracyM: 10 });
+    expect((await list()).data.incidents).toEqual([]);
+    await step({ distanceM: 45, accuracyM: 5 });
+    await step({ distanceM: 60, accuracyM: 5 });
+    await step({ distanceM: 22, accuracyM: 10 }); // incertain : ne ferme pas l'incident
+    const l = await list();
+    expect(l.data.incidents).toHaveLength(1);
+    expect(l.data.incidents![0]).toMatchObject({ deviceId: id, label: 'Poulet A', animalId: 'B-071', closedAt: null });
+    first = l.data.incidents![0]!.id;
+    expect(first).toMatch(/^INC-[0-9A-F]{5}$/);
+
+    const r = (await incident(first)).json() as ToolResult<IncidentData>;
+    expect(r.params.incidentId).toBe(first);
+    // Ce qui a été détecté et quand, la mesure et la règle qui le justifient, la précision, puis l'état ACTUEL.
+    expect(r.statements[0]!.text).toMatch(new RegExp(`^Incident ${first} : la balise de démonstration « Poulet A », associée à B-071, a été mesurée hors de sa zone le \\d{2}/\\d{2}/\\d{4}`));
+    expect(text(r)).toMatch(/45 m du repère \(précision ± 5 m\), pour un seuil de 20 m\. Source : GPS du téléphone/);
+    expect(text(r)).toMatch(/Distance la plus grande mesurée pendant l’incident : 60 m/);
+    expect(text(r)).toMatch(/Incident toujours ouvert/);
+    expect(r.statements.at(-1)!.text).toMatch(/^État actuel\. .*incertain\. 22 m du repère/);
+    expect(r.data).toMatchObject({ radiusM: 20, maxDistanceM: 60, closeReason: null, trigger: { distanceM: 45, accuracyM: 5, source: 'PHONE_GPS' } });
+    expect(r.data.current!.status).toBe('UNCERTAIN');
+    expect(r.sources.map((s) => s.ref)).toEqual([`INCIDENT:${first}`, `DEVICE:${id}`, 'ANIMAL:B-071']);
+    expect(r.limits.join(' ')).toMatch(/ce n’est pas une mesure radio de la proximité avec l’ordinateur/);
+    expect(r.limits.join(' ')).toMatch(/aucun message n’est envoyé/);
+  });
+
+  it('retour dans la zone : l’incident est terminé, et la lecture donne l’état actuel, pas celui du moment de l’alerte', async () => {
+    await step({ distanceM: 5, accuracyM: 2 });
+    const r = (await incident(first)).json() as ToolResult<IncidentData>;
+    expect(text(r)).toMatch(/Incident terminé le .* : la balise a de nouveau été mesurée dans la zone/);
+    expect(r.statements.at(-1)!.text).toMatch(/^État actuel\. .*dans la zone\. 5 m du repère/);
+    expect(r.data.closeReason).toBe('BACK_INSIDE');
+    expect((await list()).data.alerts).toEqual([]);
+  });
+
+  it('nouvel éloignement : nouvel incident ; l’ouvert passe en tête ; la preuve s’ouvre ; une autre organisation ne voit rien', async () => {
+    await step({ source: 'SIMULATED', distanceM: 50, accuracyM: null });
+    const l = await list();
+    expect(l.data.incidents).toHaveLength(2);
+    expect(l.data.incidents![0]!.closedAt).toBeNull();
+    expect(l.data.incidents![0]!.id).not.toBe(first);
+    const latest = (await incident()).json() as ToolResult<IncidentData>;
+    expect(latest.data.id).toBe(l.data.incidents![0]!.id);
+    expect(latest.limits[0]).toMatch(/^DONNÉES SIMULÉES/);
+    expect(text(latest)).toMatch(/Source : distance SIMULÉE à la main/);
+
+    const proof = (await app.inject({ url: `/api/farm/sources?ref=INCIDENT:${first}`, headers: FARMER })).json() as ToolResult<SourceData>;
+    expect(proof.data.kind).toBe('incident');
+    expect(proof.data.fields.find((f) => f.label === 'Statut')!.value).toMatch(/^terminé le/);
+    expect((await incident(first, OTHER_VET)).statusCode).toBe(404);
+    expect((await incident('INC-00000')).statusCode).toBe(404);
+    expect((await app.inject({ url: `/api/farm/sources?ref=INCIDENT:${first}`, headers: OTHER_VET })).statusCode).toBe(404);
+  });
+
+  it('l’assistant relit lui-même l’incident ouvert à l’écran, sans demander de le raconter', async () => {
+    expect(recognize('Explique-moi cet incident')).toBe('incident');
+    expect(recognize('Pourquoi cette alerte ?')).toBe('incident');
+    expect(recognize('Quel animal s’est éloigné ?')).toBe('beacons');
+    expect(recognize('Qu’est-ce qui s’est passé depuis hier ?')).toBe('changes');
+    const r = (await app.inject({ method: 'POST', url: '/api/assistant/ask', headers: FARMER, payload: { text: 'Explique-moi cet incident', contextIncidentId: first } })).json() as AssistantReply;
+    expect(r.intent).toBe('incident');
+    expect(r.results[0]!.tool).toBe('incident');
+    expect(r.results[0]!.params.incidentId).toBe(first);
+    expect(r.results[0]!.statements.at(-1)!.text).toMatch(/^État actuel\./);
+  });
+
+  it('arrêt de la balise : l’incident ouvert est terminé pour ce motif', async () => {
+    expect((await app.inject({ method: 'POST', url: `/api/farm/devices/${id}/stop`, headers: FARMER })).statusCode).toBe(200);
+    const r = (await incident()).json() as ToolResult<IncidentData>;
+    expect(r.data.closeReason).toBe('DEVICE_STOPPED');
+    expect(text(r)).toMatch(/la balise a été arrêtée/);
+    expect((await list()).data.incidents!.every((i) => i.closedAt !== null)).toBe(true);
   });
 });

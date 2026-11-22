@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
  * Balise de démonstration de bout en bout, sans IA : un second navigateur joue le téléphone, avec une position GPS
  * ÉMULÉE par le navigateur de test (ce n'est pas un vrai téléphone : le parcours réel reste à essayer à la main).
  */
-test('balise : association, repère, éloignement, alerte, question, preuve, mode simulé, arrêt', async ({ page, browser }) => {
+test('balise : association, repère, éloignement, alerte, incident compris avec l’assistant, question, preuve, mode simulé, arrêt', async ({ page, browser }) => {
   expect((await page.request.post('/api/demo/reset', { headers: { 'x-sentinelle-demo': 'reset' }, data: { withObservation: false } })).ok()).toBeTruthy();
   await page.goto('/');
   const panel = page.getByRole('region', { name: 'Balises' });
@@ -58,6 +58,30 @@ test('balise : association, repère, éloignement, alerte, question, preuve, mod
   await page.screenshot({ path: 'test-results/balise-alerte.png' });
   await phone.screenshot({ path: 'test-results/balise-telephone.png', fullPage: true });
 
+  // « Comprendre avec Sentinelle » : l'assistant s'ouvre sur l'incident enregistré et en affiche tout de suite la synthèse,
+  // lue dans les données, sans demander à l'utilisateur de raconter ce qui s'est passé.
+  await alert.getByRole('button', { name: 'Comprendre avec Sentinelle' }).click();
+  await expect(page).toHaveURL(/#\/elevage\/incident\/INC-[0-9A-F]{5}$/);
+  const incidentId = /INC-[0-9A-F]{5}/.exec(page.url())![0];
+  const synth = talk.getByRole('article').first();
+  await expect(synth).toContainText(`Incident ${incidentId} : la balise de démonstration ${id}, associée à B-071, a été mesurée hors de sa zone`);
+  await expect(synth).toContainText('Mesure qui a ouvert l’incident');
+  await expect(synth).toContainText('pour un seuil de 30 m. Source : GPS du téléphone');
+  await expect(synth).toContainText('Incident toujours ouvert');
+  await expect(synth).toContainText('État actuel.');
+  await expect(synth).toContainText('sans IA');
+  await expect(synth.getByRole('button', { name: 'Écouter et discuter' })).toBeVisible();
+  await page.screenshot({ path: 'test-results/incident-synthese.png' });
+  // La preuve de l'incident : l'enregistrement conservé, avec sa règle.
+  await synth.getByRole('button', { name: `Incident ${incidentId}` }).first().click();
+  const proof = page.getByRole('dialog');
+  await expect(proof).toContainText('Hors de la zone si la distance mesurée dépasse le seuil même en retirant la précision annoncée.');
+  await expect(proof).toContainText('ouvert');
+  await proof.getByRole('button', { name: 'Fermer' }).click();
+  // Une seule alerte pour l'épisode : les mesures suivantes n'en créent pas d'autre.
+  const incidents = (await (await page.request.get('/api/farm/devices', { headers: { 'x-demo-user': 'U-ELEVEUR' } })).json()).data.incidents as { id: string }[];
+  expect(incidents.map((i) => i.id)).toEqual([incidentId]);
+
   // « Quel animal s'est éloigné ? » : la réponse parle de la balise, avec sa source.
   await alert.getByRole('button', { name: 'Demander : quel animal s’est éloigné ?' }).click();
   const answer = talk.getByRole('article').first();
@@ -80,6 +104,30 @@ test('balise : association, repère, éloignement, alerte, question, preuve, mod
   await expect(panel).toContainText('DONNÉES SIMULÉES', { timeout: 20_000 });
   await expect(panel).toContainText('distance SIMULÉE');
   await expect(page.getByRole('alert').filter({ hasText: 'hors de sa zone' })).toHaveCount(0, { timeout: 20_000 });
+
+  // L'incident est terminé : il reste proposé sous une forme calme, et sa relecture donne l'état ACTUEL, pas celui de l'alerte.
+  const closed = page.getByRole('status').filter({ hasText: 'Incident terminé' });
+  await expect(closed).toContainText('n’est plus mesurée hors de sa zone depuis', { timeout: 20_000 });
+  await closed.getByRole('button', { name: 'Comprendre avec Sentinelle' }).click();
+  const again = talk.getByRole('article').first();
+  await expect(again).toContainText('la balise a de nouveau été mesurée dans la zone');
+  await expect(again).toContainText(/État actuel\. .*dans la zone\. 5 m du repère/);
+  await expect(again).toContainText('DONNÉES SIMULÉES');
+
+  // Lien direct vers l'incident, ouvert dans un navigateur neuf : la destination est gardée après l'ouverture de session,
+  // et la synthèse s'affiche sans aucun clic ni lecture audio automatique.
+  const fresh = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const direct = await fresh.newPage();
+  await direct.goto(`/#/elevage/incident/${incidentId}`);
+  const arrival = direct.getByRole('complementary', { name: 'Parler à mon élevage' }).getByRole('article').first();
+  await expect(arrival).toContainText(`Incident ${incidentId}`, { timeout: 15_000 });
+  await expect(arrival).toContainText('État actuel.');
+  await expect(arrival.getByRole('button', { name: 'Écouter et discuter' })).toBeVisible();
+  await expect(direct).toHaveURL(new RegExp(`#/elevage/incident/${incidentId}$`));
+  await direct.goto('/#/elevage/incident/INC-00000');
+  await direct.reload();
+  await expect(direct.getByRole('complementary', { name: 'Parler à mon élevage' }).getByRole('alert')).toContainText('Aucun incident « INC-00000 » n’est enregistré dans votre périmètre.');
+  await fresh.close();
 
   // Arrêt depuis l'écran de l'éleveur : la balise n'envoie plus rien et le téléphone le dit.
   await panel.getByRole('button', { name: 'Arrêter' }).click();

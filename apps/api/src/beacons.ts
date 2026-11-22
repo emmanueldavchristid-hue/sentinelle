@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { formatInstant } from '@sentinelle/domain';
-import { DEFAULT_BEACON_LABEL, type Beacon, type BeaconReading, type BeaconsData, type SourceData, type Statement, type ToolResult, type ZoneState } from '@sentinelle/contracts';
+import { DEFAULT_BEACON_LABEL, type Beacon, type BeaconReading, type BeaconsData, type IncidentData, type IncidentSummary, type SourceData, type Statement, type ToolResult, type ZoneState } from '@sentinelle/contracts';
 import type { Db, Queryable } from './db.js';
 import { HttpError, parse, sha256, type User } from './http.js';
 
@@ -17,8 +17,12 @@ import { HttpError, parse, sha256, type User } from './http.js';
  * - la source de chaque mesure (GPS du téléphone, ou distance SIMULÉE à la main) est stockée et affichée dans chaque preuve ;
  * - « hors zone » n'est dit que si la distance dépasse le seuil même en tenant compte de la précision ; sinon « incertain » ;
  * - une balise muette n'est pas « sortie » : on dit seulement depuis quand rien n'a été reçu ;
- * - aucune coordonnée géographique n'est transmise ni stockée ; aucune notification externe n'est envoyée.
+ * - aucune coordonnée géographique n'est transmise ni stockée ; aucune notification externe n'est envoyée ;
+ * - la distance est calculée par le téléphone (son GPS, un repère fixé par l'utilisateur) : ce n'est pas une mesure radio
+ *   de la proximité avec l'ordinateur ;
+ * - un éloignement ouvre UN incident par épisode (table device_incidents), qui garde les faits qui l'ont justifié.
  */
+export const OUTSIDE_RULE = 'Hors de la zone si la distance mesurée dépasse le seuil même en retirant la précision annoncée.';
 
 export const SILENT_AFTER_SECONDS = 20;
 const KEEP_READINGS = 300;
@@ -86,6 +90,43 @@ async function loadBeacon(q: Queryable, d: DeviceRow, nowIso: string): Promise<B
 
 const SOURCE_TEXT: Record<BeaconReading['source'], string> = { PHONE_GPS: 'GPS du téléphone', SIMULATED: 'distance SIMULÉE à la main' };
 
+interface IncidentRow {
+  id: string;
+  org_id: string;
+  device_id: string;
+  animal_id: string | null;
+  label: string;
+  rule: string;
+  radius_m: number;
+  source: BeaconReading['source'];
+  opened_at: unknown;
+  trigger_observed_at: unknown;
+  trigger_distance_m: number;
+  trigger_accuracy_m: number | null;
+  max_distance_m: number;
+  closed_at: unknown;
+  close_reason: 'BACK_INSIDE' | 'DEVICE_STOPPED' | null;
+}
+const summaryOf = (r: IncidentRow): IncidentSummary => ({ id: r.id, deviceId: r.device_id, label: r.label, animalId: r.animal_id, openedAt: iso(r.opened_at), closedAt: r.closed_at ? iso(r.closed_at) : null });
+
+/**
+ * Suit l'épisode d'éloignement d'une balise à chaque mesure reçue. « Hors zone » ouvre un incident s'il n'y en a pas d'ouvert
+ * (sinon met à jour la distance la plus grande) ; « dans la zone » le ferme. Une mesure incertaine ou sans position ne
+ * l'ouvre ni ne le ferme : on ne conclut pas quand la précision ne le permet pas.
+ */
+async function trackIncident(q: Queryable, d: DeviceRow, zone: ZoneState, reading: { source: BeaconReading['source']; observedAt: string; distanceM: number | null }, accuracy: number | null) {
+  if (zone === 'OUTSIDE' && reading.distanceM !== null) {
+    await q.query(
+      `INSERT INTO device_incidents(id, org_id, device_id, animal_id, label, rule, radius_m, source, trigger_observed_at, trigger_distance_m, trigger_accuracy_m, max_distance_m)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$10)
+       ON CONFLICT (device_id) WHERE closed_at IS NULL DO UPDATE SET max_distance_m = GREATEST(device_incidents.max_distance_m, EXCLUDED.max_distance_m)`,
+      [`INC-${randomBytes(4).toString('hex').toUpperCase().slice(0, 5)}`, d.org_id, d.id, d.animal_id, d.label, OUTSIDE_RULE, d.radius_m, reading.source, reading.observedAt, reading.distanceM, accuracy],
+    );
+  } else if (zone === 'INSIDE') {
+    await q.query(`UPDATE device_incidents SET closed_at = now(), close_reason = 'BACK_INSIDE' WHERE device_id = $1 AND closed_at IS NULL`, [d.id]);
+  }
+}
+
 /** Nom d'une balise dans une phrase : son nom choisi entre guillemets, sinon son identifiant. */
 const shown = (b: { id: string; label: string }) => (b.label && b.label !== DEFAULT_BEACON_LABEL ? `« ${b.label} »` : b.id);
 
@@ -137,7 +178,7 @@ export function beaconFunctions(db: Db) {
       asOf,
       period: null,
       statements,
-      data: { beacons, alerts: alerts.map((b) => b.id), simulated },
+      data: { beacons, alerts: alerts.map((b) => b.id), simulated, incidents: (await db.query<IncidentRow>('SELECT * FROM device_incidents WHERE org_id = $1 ORDER BY (closed_at IS NULL) DESC, opened_at DESC LIMIT 10', [u.org_id])).rows.map(summaryOf) },
       sources: [...active.map((b) => ({ ref: `DEVICE:${b.id}`, label: `Balise ${b.id}` })), ...active.filter((b) => b.animalId).map((b) => ({ ref: `ANIMAL:${b.animalId}`, label: b.animalId! }))],
       limits,
     };
@@ -169,7 +210,82 @@ export function beaconFunctions(db: Db) {
     };
   }
 
-  return { read, source };
+  /**
+   * Lecture d'un incident d'éloignement : ce qui a été détecté, quand, la mesure et la règle qui le justifient, puis l'état
+   * ACTUEL de la balise (relu maintenant, pas celui du moment de l'incident). Sans identifiant : l'incident le plus récent.
+   */
+  async function incident(u: User, p: { incidentId?: string }): Promise<ToolResult<IncidentData | null>> {
+    const asOf = await dbNow();
+    const id = p.incidentId?.trim().toUpperCase().slice(0, 60);
+    const row = id
+      ? (await db.query<IncidentRow>('SELECT * FROM device_incidents WHERE id = $1 AND org_id = $2', [id, u.org_id])).rows[0]
+      : (await db.query<IncidentRow>('SELECT * FROM device_incidents WHERE org_id = $1 ORDER BY (closed_at IS NULL) DESC, opened_at DESC LIMIT 1', [u.org_id])).rows[0];
+    if (!row) {
+      if (id) throw new HttpError(404, 'NOT_FOUND', 'Incident introuvable dans votre périmètre');
+      return { tool: 'incident', params: {}, asOf, period: null, statements: [{ nature: 'MISSING', text: 'Aucun incident de balise n’est enregistré.', sources: [] }], data: null, sources: [], limits: ['Un incident n’est créé que lorsqu’une balise est mesurée hors de sa zone.'] };
+    }
+    const d = (await db.query<DeviceRow>('SELECT id, org_id, label, animal_id, radius_m, created_at, stopped_at FROM devices WHERE id = $1 AND org_id = $2', [row.device_id, u.org_id])).rows[0];
+    const current = d ? await loadBeacon(db, d, asOf) : null;
+    const who = `la balise de démonstration ${shown({ id: row.device_id, label: row.label })}${row.animal_id ? `, associée à ${row.animal_id},` : ''}`;
+    const refs = [`INCIDENT:${row.id}`, `DEVICE:${row.device_id}`, ...(row.animal_id ? [`ANIMAL:${row.animal_id}`] : [])];
+    const acc = row.trigger_accuracy_m ? ` (précision ± ${meters(Number(row.trigger_accuracy_m))})` : '';
+    const statements: Statement[] = [
+      { nature: 'FACT', text: `Incident ${row.id} : ${who} a été mesurée hors de sa zone le ${fmtSec(iso(row.trigger_observed_at))}.`, sources: refs },
+      {
+        nature: 'FACT',
+        text: `Mesure qui a ouvert l’incident : ${meters(Number(row.trigger_distance_m))} du repère${acc}, pour un seuil de ${meters(row.radius_m)}. Source : ${SOURCE_TEXT[row.source]}. Reçue par le serveur à ${fmtSec(iso(row.opened_at)).slice(11)}.`,
+        sources: [`INCIDENT:${row.id}`],
+      },
+      { nature: 'COMPUTED', text: `Règle appliquée : ${row.rule.charAt(0).toLowerCase()}${row.rule.slice(1)} Distance la plus grande mesurée pendant l’incident : ${meters(Number(row.max_distance_m))}.`, sources: [`INCIDENT:${row.id}`] },
+      row.closed_at
+        ? { nature: 'FACT', text: `Incident terminé le ${fmtSec(iso(row.closed_at))} : ${row.close_reason === 'DEVICE_STOPPED' ? 'la balise a été arrêtée' : 'la balise a de nouveau été mesurée dans la zone'}.`, sources: [`INCIDENT:${row.id}`] }
+        : { nature: 'COMPUTED', text: 'Incident toujours ouvert : aucune mesure « dans la zone » n’a été reçue depuis.', sources: [`INCIDENT:${row.id}`] },
+    ];
+    if (current) {
+      const now = beaconSentence(current);
+      statements.push({ ...now, text: `État actuel. ${now.text}` });
+    }
+    const limits = [
+      'Une balise mesure sa propre distance à un repère choisi par l’utilisateur. Elle ne mesure ni la position exacte ni l’état de l’animal auquel elle est associée.',
+      'La distance est calculée par le téléphone à partir de son GPS et du repère : ce n’est pas une mesure radio de la proximité avec l’ordinateur.',
+      'Dispositif de démonstration : un téléphone tenu à la main. Aucun capteur n’est posé sur un animal. Alerte affichée dans l’application uniquement : aucun message n’est envoyé.',
+    ];
+    if (row.source === 'SIMULATED' || current?.latest?.source === 'SIMULATED') limits.unshift('DONNÉES SIMULÉES : la distance a été réglée à la main, ce n’est pas une mesure.');
+    const data: IncidentData = {
+      ...summaryOf(row),
+      rule: row.rule,
+      radiusM: row.radius_m,
+      trigger: { observedAt: iso(row.trigger_observed_at), distanceM: Number(row.trigger_distance_m), accuracyM: row.trigger_accuracy_m === null ? null : Number(row.trigger_accuracy_m), source: row.source },
+      maxDistanceM: Number(row.max_distance_m),
+      closeReason: row.close_reason,
+      current,
+    };
+    return { tool: 'incident', params: { incidentId: row.id }, asOf, period: null, statements, data, sources: [{ ref: `INCIDENT:${row.id}`, label: `Incident ${row.id}` }, { ref: `DEVICE:${row.device_id}`, label: `Balise ${row.device_id}` }, ...(row.animal_id ? [{ ref: `ANIMAL:${row.animal_id}`, label: row.animal_id }] : [])], limits };
+  }
+
+  /** Preuve d'un incident : l'enregistrement tel qu'il est conservé. */
+  async function incidentSource(u: User, id: string): Promise<SourceData | null> {
+    const row = (await db.query<IncidentRow>('SELECT * FROM device_incidents WHERE id = $1 AND org_id = $2', [id.toUpperCase(), u.org_id])).rows[0];
+    if (!row) return null;
+    return {
+      ref: `INCIDENT:${row.id}`,
+      kind: 'incident',
+      title: `Incident d’éloignement ${row.id}`,
+      fields: [
+        { label: 'Balise', value: `${row.label} (${row.device_id}), téléphone de démonstration` },
+        { label: 'Animal associé', value: row.animal_id ?? 'aucun' },
+        { label: 'Règle', value: row.rule },
+        { label: 'Seuil', value: meters(row.radius_m) },
+        { label: 'Mesure qui a ouvert l’incident', value: `${meters(Number(row.trigger_distance_m))}${row.trigger_accuracy_m ? ` ± ${meters(Number(row.trigger_accuracy_m))}` : ''} · observée ${fmtSec(iso(row.trigger_observed_at))} · reçue ${fmtSec(iso(row.opened_at)).slice(11)} · ${SOURCE_TEXT[row.source]}` },
+        { label: 'Distance la plus grande', value: meters(Number(row.max_distance_m)) },
+        { label: 'Statut', value: row.closed_at ? `terminé le ${fmtSec(iso(row.closed_at))} (${row.close_reason === 'DEVICE_STOPPED' ? 'balise arrêtée' : 'balise de nouveau dans la zone'})` : 'ouvert' },
+      ],
+      event: null,
+      revisions: [],
+    };
+  }
+
+  return { read, source, incident, incidentSource };
 }
 
 interface Ctx {
@@ -202,6 +318,7 @@ export function registerBeacons(ctx: Ctx) {
     const id = (req.params as { id: string }).id;
     const r = await db.query('UPDATE devices SET stopped_at = now() WHERE id = $1 AND org_id = $2 AND stopped_at IS NULL RETURNING id', [id, u.org_id]);
     if (!r.rows.length) throw new HttpError(404, 'NOT_FOUND', 'Balise introuvable ou déjà arrêtée');
+    await db.query(`UPDATE device_incidents SET closed_at = now(), close_reason = 'DEVICE_STOPPED' WHERE device_id = $1 AND closed_at IS NULL`, [id]);
     await ctx.audit(db, u, 'DEVICE_STOPPED', 'device', id);
     return { ok: true };
   });
@@ -234,6 +351,7 @@ export function registerBeacons(ctx: Ctx) {
     const accuracy = body.source === 'SIMULATED' ? 0 : body.accuracyM;
     const zone = zoneOf(body.distanceM, accuracy, d.radius_m);
     await db.query('INSERT INTO device_readings(device_id, org_id, source, observed_at, distance_m, accuracy_m, zone) VALUES ($1,$2,$3,$4,$5,$6,$7)', [d.id, d.org_id, body.source, body.observedAt, body.distanceM, accuracy, zone]);
+    await trackIncident(db, d, zone, body, accuracy);
     await db.query('DELETE FROM device_readings WHERE device_id = $1 AND id <= COALESCE((SELECT id FROM device_readings WHERE device_id = $1 ORDER BY id DESC OFFSET $2 LIMIT 1), 0)', [d.id, KEEP_READINGS]);
     return reply.status(201).send({ accepted: true, zone, radiusM: d.radius_m });
   });

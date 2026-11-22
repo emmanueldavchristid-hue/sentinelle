@@ -1,9 +1,11 @@
 import { checkAssistantConfig, config, envFile, envFileLoaded } from './config.js';
+import { WebSocket } from 'ws';
 import { GeminiError, geminiModel, listGeminiModels } from './gemini.js';
 
 /**
  * Vérification réelle de la connexion à Gemini : « pnpm assistant:check ».
- * 1. liste les modèles disponibles avec la clé ; 2. appel minimal ; 3. appel de fonction.
+ * 1. liste les modèles disponibles avec la clé ; 2. appel minimal ; 3. appel de fonction ; 4. synthèse vocale ;
+ * 5. ouverture d'une conversation en direct (API Live).
  * N'affiche jamais la clé. Chaque étape effectue de vrais appels (consommation minime sur le quota du projet Google).
  */
 const say = (s: string) => console.log(s);
@@ -60,11 +62,47 @@ try {
   say('\n4. Réponse parlée (synthèse vocale) :');
   if (!model.speak) say('   GEMINI_TTS_MODEL n’est pas renseigné : les réponses seront lues par la voix de synthèse de l’appareil.');
   else {
+    // Cette étape consomme une demande de synthèse vocale. Sur le palier gratuit, le modèle vocal constaté le 22/11/2026
+    // n'en accepte que 10 par jour : un échec ici n'empêche pas le reste (la voix de l'appareil prend le relais).
     const t0 = Date.now();
-    const audio = await model.speak({ text: 'Cinq enregistrements ont été reçus depuis hier.', signal: ac.signal }).catch((e) => fail('synthèse vocale', e));
-    say(`   Son reçu (${Math.round(audio.length / 1024)} Ko en ${Date.now() - t0} ms, modèle ${config.geminiTtsModel}) : opérationnel. Le contenu n’est pas écouté par cette commande.`);
+    try {
+      const audio = await model.speak({ text: 'Cinq enregistrements ont été reçus depuis hier.', signal: ac.signal });
+      say(`   Son reçu (${Math.round(audio.length / 1024)} Ko en ${Date.now() - t0} ms, modèle ${config.geminiTtsModel}) : opérationnel. Le contenu n’est pas écouté par cette commande.`);
+    } catch (e) {
+      say(`   INDISPONIBLE pour l’instant : ${e instanceof GeminiError ? `${e.message} [${e.code}]` : 'erreur inattendue'}`);
+      say('   Les réponses par tours seront dites par la voix de synthèse de l’appareil. La conversation en direct n’utilise pas ce modèle.');
+    }
   }
-  say(`\nRésultat : texte ${called ? 'et appels de fonctions opérationnels' : 'opérationnel, appels de fonctions NON confirmés'}. Voix (API Live) : non testée par cette commande.`);
+
+  say('\n5. Conversation en direct (API Live) :');
+  let live: 'ok' | 'absent' | 'échec' = 'absent';
+  if (!config.geminiLiveModel) say('   GEMINI_LIVE_MODEL n’est pas renseigné : conversation en direct indisponible, la dictée et le texte restent.');
+  else {
+    const t0 = Date.now();
+    live = await new Promise<'ok' | 'échec'>((resolve) => {
+      // La clé voyage dans un en-tête, jamais dans l'adresse.
+      const ws = new WebSocket('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent', { headers: { 'x-goog-api-key': config.geminiApiKey } });
+      const done = (r: 'ok' | 'échec', why: string) => {
+        clearTimeout(limit);
+        say(`   ${why}`);
+        try {
+          ws.close();
+        } catch {
+          /* déjà fermée */
+        }
+        resolve(r);
+      };
+      const limit = setTimeout(() => done('échec', 'Aucune réponse en 12 secondes.'), 12_000);
+      ws.on('open', () => ws.send(JSON.stringify({ setup: { model: `models/${config.geminiLiveModel}`, generationConfig: { responseModalities: ['AUDIO'] } } })));
+      ws.on('message', (d) => {
+        if (String(d).includes('setupComplete')) done('ok', `Session ouverte en ${Date.now() - t0} ms sur ${config.geminiLiveModel} : opérationnel. Aucun son n’est échangé par cette commande.`);
+      });
+      ws.on('unexpected-response', (_q, res) => done('échec', `Refus à l’ouverture (HTTP ${res.statusCode}).`));
+      ws.on('error', () => done('échec', 'Connexion impossible.'));
+      ws.on('close', (code, reason) => done('échec', `Fermée par le service (${code}) : ${String(reason).split(config.geminiApiKey).join('<clé>').slice(0, 160)}`));
+    });
+  }
+  say(`\nRésultat : texte ${called ? 'et appels de fonctions opérationnels' : 'opérationnel, appels de fonctions NON confirmés'}. Conversation en direct : ${live === 'ok' ? 'opérationnelle' : live === 'absent' ? 'non configurée' : 'EN ÉCHEC (la dictée et le texte restent)'}.`);
   process.exit(called ? 0 : 1);
 } finally {
   clearTimeout(timer);

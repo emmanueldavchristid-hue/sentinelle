@@ -39,7 +39,8 @@ function LoginForm() {
       const u = await api<{ id: string; name: string; role: 'AGENT' | 'VET' | 'FARMER'; org_id: string; orgName: string }>('/api/auth/login', { method: 'POST', body: { username: username.trim(), password } });
       setPassword('');
       login({ userId: u.id, name: u.name, role: u.role, orgId: u.org_id, orgName: u.orgName });
-      go('elevage');
+      // Un lien direct vers un incident garde sa destination après la connexion.
+      if (!location.hash.startsWith('#/elevage/')) go('elevage');
     } catch (err) {
       setError(err instanceof ApiFailure ? err.message : errorMessage(err));
     } finally {
@@ -122,7 +123,7 @@ function RolePicker() {
         const farmer = r.users.find((u) => u.id === 'U-ELEVEUR');
         if (farmer && !wantsRolePicker() && route !== 'roles') {
           login({ userId: farmer.id, name: farmer.name, role: farmer.role, orgId: farmer.org_id, orgName: farmer.org_name });
-          go('elevage');
+          if (!location.hash.startsWith('#/elevage/')) go('elevage');
           return;
         }
         setWantsRolePicker(true);
@@ -216,7 +217,7 @@ function Router() {
   if (page === undefined || page === 'elevage' || page === 'roles') {
     return (
       <Shell current="elevage">
-        <FarmHome animalId={page === 'elevage' && arg === 'animal' && arg2 ? arg2 : null} />
+        <FarmHome animalId={page === 'elevage' && arg === 'animal' && arg2 ? arg2 : null} incidentId={page === 'elevage' && arg === 'incident' && arg2 ? arg2 : null} />
       </Shell>
     );
   }

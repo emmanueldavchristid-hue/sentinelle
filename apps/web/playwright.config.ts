@@ -24,7 +24,7 @@ export default defineConfig({
     ...(executablePath ? { launchOptions: { executablePath, args: ['--no-sandbox'] } } : { channel: process.env.PW_CHANNEL || undefined }),
   },
   projects: [
-    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec|direct(-question|-confirme)?\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec|direct(-question|-confirme|-incident)?\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
     // Dictée avec un faux microphone (fichier WAV de synthèse) et un vrai appel de transcription : seulement si VOIX=1.
     {
       name: 'voix',
@@ -75,6 +75,19 @@ export default defineConfig({
         launchOptions: {
           ...(executablePath ? { executablePath } : {}),
           args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-puis-confirme.wav')}%noloop`, ...(executablePath ? ['--no-sandbox'] : [])],
+        },
+        ...(executablePath ? { channel: undefined } : {}),
+      },
+    },
+    {
+      name: 'direct-incident',
+      testMatch: /direct-incident\.spec/,
+      use: {
+        ...devices['Desktop Chrome'],
+        permissions: ['microphone'],
+        launchOptions: {
+          ...(executablePath ? { executablePath } : {}),
+          args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/silence.wav')}%noloop`, ...(executablePath ? ['--no-sandbox'] : [])],
         },
         ...(executablePath ? { channel: undefined } : {}),
       },

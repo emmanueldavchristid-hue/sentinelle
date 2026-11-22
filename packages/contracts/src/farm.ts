@@ -62,7 +62,7 @@ export interface FarmEvent {
   author: string | null;
 }
 
-export type FarmToolName = 'situation' | 'changes' | 'find_animal' | 'animal' | 'missing' | 'source' | 'prepare_observation' | 'beacons';
+export type FarmToolName = 'situation' | 'changes' | 'find_animal' | 'animal' | 'missing' | 'source' | 'prepare_observation' | 'beacons' | 'incident';
 
 /** Enveloppe commune à tous les résultats : données, sources, dates, limites, paramètres. */
 export interface ToolResult<T = unknown> {
@@ -149,7 +149,7 @@ export interface MissingData {
 }
 export interface SourceData {
   ref: string;
-  kind: 'observation' | 'record' | 'task' | 'animal' | 'site' | 'device';
+  kind: 'observation' | 'record' | 'task' | 'animal' | 'site' | 'device' | 'incident';
   title: string;
   /** Champs lisibles de l'enregistrement, dans l'ordre d'affichage. */
   fields: { label: string; value: string }[];
@@ -210,7 +210,29 @@ export interface Beacon {
   silentSeconds: number | null;
   recent: BeaconReading[];
 }
+/** Incident d'éloignement : un épisode « hors zone » d'une balise, avec les faits qui l'ont justifié. */
+export interface IncidentSummary {
+  id: string;
+  deviceId: string;
+  label: string;
+  animalId: string | null;
+  openedAt: string;
+  closedAt: string | null;
+}
+export interface IncidentData extends IncidentSummary {
+  /** Règle appliquée, en clair, et seuil au moment de l'incident. */
+  rule: string;
+  radiusM: number;
+  /** Mesure qui a ouvert l'incident. */
+  trigger: { observedAt: string; distanceM: number; accuracyM: number | null; source: BeaconReading['source'] };
+  maxDistanceM: number;
+  closeReason: 'BACK_INSIDE' | 'DEVICE_STOPPED' | null;
+  /** État de la balise au moment de la lecture (pas au moment de l'incident). */
+  current: Beacon | null;
+}
 export interface BeaconsData {
+  /** Incidents récents (ouverts d'abord) : un par épisode d'éloignement. */
+  incidents?: IncidentSummary[];
   beacons: Beacon[];
   /** Identifiants des balises hors de leur zone. */
   alerts: string[];
@@ -256,7 +278,7 @@ export interface AssistantStatus {
  * ci-dessous voyagent en trames texte (JSON). Aucun son n'est conservé par le serveur.
  */
 export type LiveClientMessage =
-  | { type: 'start'; demoUser?: string; contextAnimalId?: string; contextIncidentId?: string }
+  | { type: 'start'; demoUser?: string; contextAnimalId?: string; contextIncidentId?: string; /** L'utilisateur a demandé à écouter cet incident : l'assistant commence par le résumer. */ speakIncident?: boolean }
   | { type: 'stop' }
   /** Réponse à `confirm_request` : ce que le chemin d'écriture habituel (brouillon, file d'envoi, reçu) a donné. */
   | { type: 'confirm_result'; id: string; state: 'RECEIVED' | 'QUEUED' | 'FAILED' | 'INVALID' | 'NO_DRAFT'; receivedAt?: string | null }
@@ -348,7 +370,7 @@ export interface TranscriptionReply {
 export interface AssistantReply {
   mode: 'direct' | 'ai';
   provider: string | null;
-  intent: 'situation' | 'changes' | 'why_changed' | 'why_shown' | 'animal' | 'missing' | 'beacons' | 'draft' | 'unknown' | 'ai';
+  intent: 'situation' | 'changes' | 'why_changed' | 'why_shown' | 'animal' | 'missing' | 'beacons' | 'incident' | 'draft' | 'unknown' | 'ai';
   /** Texte formulé par le modèle (mode « ai » uniquement). */
   text: string | null;
   /** Comment la réponse a été produite. Toujours affiché. */

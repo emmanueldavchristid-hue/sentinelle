@@ -3,9 +3,21 @@
 Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : lire `CLAUDE.md`, ce fichier, puis `git status`.
 
 ## Dernier point de contrôle
-- Date : 2026-11-21 (Africa/Abidjan), session Claude Code sur le PC Windows de Yvan.
+- Date : 2026-11-22, vers 01 h 30 (Africa/Abidjan), session Claude Code sur le PC Windows de Yvan.
 - Branche : `sentinelle-vivant` (créée depuis `feat/sentinelle-demo`, qui garde la version du 20/11 avec ses correctifs commités : `da53611`).
 - Rien n'est poussé vers GitHub. Aucune fusion.
+- **Version servie** : lisible dans `GET /api/health` (`version` = commit relevé au démarrage, `startedAt`). Le lien public est un tunnel Cloudflare temporaire, sans contrôle d'accès.
+- **Version de secours** : étiquette Git `stable-2026-11-21` (commit `c20f2ec`, voix par tours, sans conversation en direct), installée et compilée dans le dossier voisin `sentinelle-secours`. Lancement : `lancer-secours.bat` (dossier parent), après avoir fermé l'autre serveur. Démarrage vérifié le 22/11 sur un autre port, base en mémoire.
+- Sauvegardes locales (hors Git, sans `.env`) : `data/sauvegardes/live-en-cours-2026-11-22.tar.gz` (fichiers du chantier avant commit).
+
+## Parcours visé pour la démonstration (état au 22/11)
+Téléphone autorisé, position reçue, éloignement affiché, incident expliqué, accès direct à l'assistant sur cet incident, conversation vocale réelle, preuves accessibles.
+| Maillon | État |
+|---|---|
+| Téléphone autorisé, distance reçue, éloignement affiché | Vérifié dans Chrome avec une position ÉMULÉE (`balises.spec.ts`). Jamais essayé avec un vrai téléphone ni un vrai GPS. |
+| Incident expliqué, accès direct à l'assistant | Vérifié dans Chrome (`balises.spec.ts`) : alerte, « Comprendre avec Sentinelle », synthèse immédiate, preuve, incident terminé, lien direct. |
+| Conversation vocale réelle | Vérifié dans Chrome avec de vrais appels à l'API Live et un FAUX micro (4 scénarios). Jamais essayé avec une voix humaine ni des haut-parleurs réels. |
+| E-mail avec lien direct | Non réalisé (aucun fournisseur d'envoi configuré). Le lien direct `/#/elevage/incident/INC-…` existe et garde sa destination après l'ouverture de session. |
 
 ## Audit du 21/11 (dépôt réel)
 | Constat | Détail |
@@ -16,6 +28,15 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 | Défaut trouvé en route | Une recompilation serveur allumé laissait un écran blanc : le serveur renvoyait la page HTML à la place d'un script absent, et le service worker la mettait en cache. Corrigé (404 réel, cache v2). |
 
 ## Ce qui marche (vérifié)
+- **Conversation en direct** (demande de Yvan, 21/11 au soir : « répondre dès que l'utilisateur finit de parler, sans transcrire ») : le gros bouton « Parler » ouvre une conversation avec l'API Live de Gemini (`GEMINI_LIVE_MODEL=gemini-3.8-live`) par un relais du serveur (`apps/api/src/live.ts`, WebSocket `/api/assistant/live`). La clé reste côté serveur ; le son est relayé sans être conservé ; le journal ne garde que durée, tours et noms de fonctions. Le modèle appelle les mêmes fonctions validées que le reste de l'application. Vérifié dans Chrome avec de vrais appels et un faux micro : question parlée puis réponse à la voix reprenant le chiffre lu (`direct-question.spec.ts`), brouillon dicté, « Interrompre », confirmation au bouton rapportée à l'assistant, micro libéré, réouverture (`direct.spec.ts`), « je confirme » à la voix (`direct-confirme.spec.ts`), panne du fournisseur avec repli sur la dictée (`direct.spec.ts`, modèle inconnu).
+  - **Semi-duplex** : pendant que l'assistant parle, le micro n'est pas transmis ; on l'interrompt par le bouton « Interrompre ». Il n'y a pas d'interruption à la voix. À présenter ainsi.
+  - **Délai mesuré dans Chrome** (faux micro, valeur approchée) : premier son 1,7 à 2,0 s après la fin de la phrase ; 2,5 s par le tunnel public. La sonde brute de l'API donnait 0,8 s : ce n'est pas l'expérience de l'utilisateur.
+  - **Limite assumée** : la voix est entendue au fur et à mesure qu'elle est produite, ses phrases ne peuvent donc pas être contrôlées avant d'être dites. L'écran affiche la transcription automatique de ce qui a été dit, présentée comme telle, et à côté les lectures de données faites pendant l'échange. Constat réel : une réponse a parlé d'« observations de santé » alors que la lecture disait « observations » ; le chiffre, lui, était exact.
+  - **Lecture de référence** : pour une question reconnue (changements, manques, balises, incident), le serveur fait lui-même la lecture correspondante, quel que soit l'outil choisi par le modèle (constat réel : il appelait parfois « situation » pour « qu'est-ce qui a changé »).
+  - **Bornes** : 5 minutes par conversation, fermeture après 30 s sans parole, 3 conversations simultanées, 60 minutes cumulées par démarrage du serveur (`LIVE_*` dans `.env.example`).
+  - **Secours conservés** : si la conversation ne peut pas s'ouvrir, l'écran le dit et repasse à la dictée par tours ; le texte et le mode sans IA restent.
+- **Confirmation à la voix durcie** : la phrase ENTIÈRE doit être faite de mots de confirmation. « je ne confirme pas », « tu as dit je confirme », « explique ce que veut dire confirmer », « oui mais change le lieu » ne confirment rien. En direct, la confirmation vise un brouillon précis (identifiant, empreinte du contenu), valable 2 minutes, une seule fois ; un simple « oui » ne vaut que juste après la lecture du brouillon. Le modèle ne peut pas enregistrer : c'est la phrase entendue, vérifiée par une règle fixe, qui déclenche l'écriture par le chemin habituel de l'écran, et le modèle ne dit « enregistré » qu'au vu du reçu.
+- **Incident d'éloignement persistant** (`device_incidents`, migration 007) : la première mesure « hors zone » ouvre UN incident pour tout l'épisode ; une mesure incertaine ne l'ouvre ni ne le ferme ; le retour dans la zone ou l'arrêt de la balise le ferme. Il garde la mesure, la précision, le seuil, la source et la règle. Sur l'alerte : « Comprendre avec Sentinelle » ouvre l'assistant sur cet incident (`/#/elevage/incident/INC-…`) : la synthèse s'affiche tout de suite, lue dans les données, sans IA (ce qui a été détecté, quand, la mesure, la règle, l'état ACTUEL, les limites), puis « Écouter et discuter » ouvre la conversation en direct, qui commence par résumer l'incident (vérifié avec le vrai modèle : `direct-incident.spec.ts`). Un incident terminé reste proposé 30 minutes sous une forme calme.
 - **Affichage simple par défaut** (demande de Yvan, 21/11 : « trop d'infos techniques ») : trois chiffres, un gros bouton « Parler », des réponses en phrases courtes sans libellés ni identifiants, des brouillons résumés avec deux gros boutons à icône. Les natures d'information, les sources, les trois dates et les limites restent à un clic (« Détails et preuves », « Voir le détail ») ; « Affichage détaillé » les montre d'emblée et reste mémorisé. La mention « données synthétiques » et tout avertissement touchant à la vérité d'une réponse restent visibles dans les deux modes. Vérifié par `simple.spec.ts`.
 - **Parcours sans lecture** : un appui sur le gros micro ouvre l'écoute, qui s'arrête d'elle-même quand on se tait ; la phrase transcrite part directement ; la réponse est dite. Un brouillon lu à voix haute se confirme en disant ou en écrivant « je confirme » (ou « oui »), s'abandonne par « non ». Seule une phrase courte vaut confirmation, et seulement si un brouillon complet vient d'être présenté.
 - **Mode discussion** (note vocale de Mouhi) : l'utilisateur ouvre une session, le micro se rouvre après chaque réponse dite, sans toucher l'écran. Elle s'arrête quand il le demande, s'il se tait (8 s), après 3 minutes ou 12 échanges, et l'écran dit pourquoi. Vérifié avec de vrais appels : deux échanges enchaînés d'eux-mêmes (`voix.spec.ts`).
@@ -36,8 +57,10 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 
 ## Ce qui ne marche pas ou n'existe pas
 - **Balises** : jamais essayées avec un vrai téléphone ni un vrai GPS (seulement une position émulée). En intérieur, la précision du GPS (souvent 10 à 30 m) donnera « incertain » plutôt que « hors zone » dans une petite salle : c'est voulu, et le mode simulé, marqué « données simulées », sert à ce cas. Pas de notification par e-mail ni sur le téléphone : le brief interdit les notifications externes ; l'alerte est dans l'application. Un téléphone en veille n'envoie plus rien (balise dite « muette »).
-- **Discussion « du tac au tac »** : ce qui existe enchaîne écoute, transcription, lecture des données et synthèse vocale ; chaque tour prend plusieurs secondes (de 5 à 15 mesurées), ce n'est pas instantané. Une vraie conversation en continu passerait par l'API Live de Gemini (jetons éphémères), non commencée.
-- **Conversation vocale en direct** (API Live, échange parlé continu) : non implémentée. `GEMINI_LIVE_MODEL` reste prévu en configuration, sans code derrière. Ce qui existe est la dictée (voir « Ce qui marche »).
+- **Conversation en direct** : pas d'interruption à la voix (semi-duplex) ; jamais essayée avec une voix humaine, un téléphone ou de vrais haut-parleurs (risque d'écho non mesuré) ; coupure réseau réelle non rejouée dans un navigateur (seulement la fermeture par le fournisseur, contre un faux fournisseur) ; limites du palier gratuit pour le modèle en direct non connues (page des quotas réservée au titulaire du compte).
+- **Synthèse vocale par tours limitée à 10 demandes par jour** sur le palier gratuit (constat du 22/11, message de Google : `GenerateRequestsPerDayPerProjectPerModel-FreeTier`, modèle `gemini-3.8-flash-lite-tts`). Une fois la limite atteinte, les réponses par tours sont dites par la voix de l'appareil. La limite se réinitialise vers 8 h (Abidjan). `voix.spec.ts` n'a pas pu être rejoué le 22/11 pour cette raison ; la conversation en direct utilise un autre modèle et n'est pas concernée.
+- **E-mail d'alerte** : non réalisé, aucun envoi simulé. Aucun fournisseur d'envoi n'est configuré, et le brief d'origine interdisait les notifications externes. Il manque : un fournisseur, un destinataire de test consentant, une adresse publique stable.
+- **Balises** : le serveur ne reçoit que la distance et la précision, pas de coordonnées (voulu). La distance est calculée par le téléphone depuis un repère : ce n'est pas une mesure radio de proximité avec l'ordinateur, et l'écran ne le prétend pas.
 - Dictée : le refus du micro, l'absence de micro et la coupure réseau ont leurs messages, mais ces trois cas n'ont pas été rejoués dans un navigateur (seuls le parcours complet et l'annulation l'ont été). Aucun essai avec une vraie voix humaine ni sur téléphone. Les réponses parlées n'ont pas été écoutées par une personne : leur contenu a été contrôlé par transcription, pas leur naturel ni leur prononciation des identifiants. Le palier tarifaire du modèle vocal n'a pas été vérifié sur la page des tarifs de Google.
 - **Lots** (volailles) : aucun lot en base ; l'écran affiche « aucun lot ». Pas de recherche documentaire, pas de simulateur IoT (bonus non commencés).
 - **Préparer une tâche** par l'assistant : non fait (les tâches existantes viennent des enquêtes).
@@ -46,7 +69,16 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 - Modèles Gemini : `gemini-3.8-flash` et `gemini-4-hydrogen` répondaient 503 (surcharge) le 21/11 ; `gemini-3.6-flash` a mis jusqu'à 39 s. Retenu : `gemini-3.5-flash-lite` (1 à 6 s), secours `gemini-3.6-flash`.
 - Défauts connus non traités : identifiants en double à la casse près (la recherche les liste, sans les fusionner), fenêtre par défaut d'une enquête pour une date « Inconnue », lisibilité de l'ancien schéma de la console d'enquête.
 
-## Tests exécutés (Windows, Node 24, 21/11)
+## Tests exécutés sur la version actuelle (Windows, Node 24, 22/11 entre 00 h et 01 h 30)
+- `pnpm -r typecheck` : OK.
+- API **125/125** (dont `live.test.ts` 20/20 contre un faux fournisseur, `beacons.test.ts` 18/18 avec les incidents) ; web **6/6** ; domaine **32/33** (voir plus bas).
+- Navigateur sans IA : **17/17** (`PW_CHANNEL=chrome`, application compilée à part pour ne pas toucher la version servie).
+- Appels RÉELS à l'API Live, faux micro : `DIRECT=1 PW_CHANNEL=chrome pnpm --filter @sentinelle/web exec playwright test --project=direct --project=direct-question --project=direct-confirme --project=direct-incident` : **4/4** ; panne du fournisseur (`GEMINI_LIVE_MODEL=modele-inexistant`) : 1/1.
+- `pnpm assistant:check` : texte, appels de fonctions et conversation en direct opérationnels ; synthèse vocale indisponible (quota du jour atteint).
+- **Tests humains : aucun.** Protocole court dans `docs/ESSAIS.md`.
+- **Test de performance du moteur** (`packages/domain`, « 2 000 animaux, 20 lieux : calcul sous 2 s ») : 3 passages isolés le 22/11 : 1 réussi, 2 à 2,01 et 2,06 s. Scénario : moteur d'enquête du vétérinaire sur un jeu synthétique de 2 000 animaux, pas le parcours de l'éleveur (8 animaux). Matériel : Intel Core i7-4800MQ (2013), avec le serveur, le tunnel et Chrome en marche. Impact sur la démonstration : aucun. Ni le seuil ni le moteur n'ont été modifiés.
+
+## Tests historiques (21/11, version précédente)
 - `pnpm -r typecheck` : OK.
 - Dictée puis réponse parlée : `voix.spec.ts` 1/1 (à la demande, appels réels de transcription et de synthèse vocale).
 - Tests unitaires : API **99/99** (dont 53 nouveaux, avec `beacons.test.ts` : `farm.test.ts`, `assistant.test.ts`), web 6/6. Domaine **32/33** l'après-midi du 21/11 : le test de performance du moteur (« 2 000 animaux, calcul sous 2 s ») échoue à 2,3 s sur cette machine alors qu'il passait le matin (33/33) ; le code du moteur n'a pas été modifié, le seuil non plus.
@@ -56,13 +88,16 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 - Projet `auth` des tests de navigateur : **non exécuté** (ignoré sous Windows) ; `auth.spec.ts` a été adapté sans pouvoir être rejoué ici. Commande : `pnpm e2e` sous Linux ou en CI.
 
 ## Blocages et points d'attention
-- **Clés exposées** : les clés ont transité par WhatsApp et par la conversation Claude. À régénérer après la démonstration. La clé « grok » est en réalité une clé Groq (`gsk_`) : non enregistrée, non utilisée.
+- **Clés exposées** : les clés ont transité par WhatsApp et par la conversation Claude. À remplacer par le titulaire du compte Google (Mouhi), sans attendre la fin de la démonstration si c'est possible : créer la nouvelle clé dans AI Studio, l'écrire lui-même dans `sentinelle/.env` (ne jamais la coller dans une conversation), lancer `pnpm assistant:check` (étapes 2, 3 et 5 opérationnelles), redémarrer le serveur, puis seulement révoquer l'ancienne. La clé « grok » est en réalité une clé Groq (`gsk_`) : non enregistrée, non utilisée.
+- **Lien public sans contrôle d'accès** : en mode démonstration, quiconque a le lien peut lire les données synthétiques et ouvrir une conversation. La dépense est bornée (durées, simultanéité, 60 minutes cumulées par démarrage), pas l'accès. Couper le tunnel hors des essais.
+- **Passage de minuit** : « depuis hier » part de la veille à 00:00 (Abidjan, UTC). Le jeu chargé le 21/11 ne compte plus que 2 enregistrements « depuis hier » le 22/11 (les essais de la veille). Le chiffre du script (« 5, puis 6 ») suppose une réinitialisation le jour même.
 - **Palier gratuit Google** : d'après la documentation lue le 21/11, le contenu envoyé sur le palier gratuit sert à améliorer les produits Google. Acceptable ici (données synthétiques), à revoir avant toute donnée réelle. La facturation du projet Google de la clé n'est pas visible depuis ce poste.
 - **Règlement du concours** : autorisation du code préalable toujours non confirmée (D-01, D-09).
 - Base locale `data/pglite` : réinitialisée le 21/11 à 15:15 avec l'accord de Yvan (jeu vivant chargé, vérifié : 8 animaux, 5 enregistrements depuis hier). Sauvegarde de l'état précédent : `data/sauvegardes/avant-jeu-vivant-2026-11-21.tar.gz` (hors Git). **Les dates du jeu sont relatives au jour de la réinitialisation : à refaire le jour de la démonstration** (`pnpm demo:reset` serveur arrêté, ou « Réinitialiser le scénario »), sinon « depuis hier » sera vide.
 
 ## Prochaine action précise
-1. Le jour de la démonstration : réinitialiser de nouveau le jeu (dates relatives), lancer `pnpm assistant:check`, puis dérouler `docs/DEMO.md` une fois en entier sur `http://localhost:3000`.
+0. Essais humains de `docs/ESSAIS.md` (voix réelle, haut-parleurs, téléphone, GPS) : c'est le principal risque restant.
+1. Le jour de la démonstration : réinitialiser de nouveau le jeu (dates relatives ; efface les essais), lancer `pnpm assistant:check`, puis dérouler `docs/DEMO.md` une fois en entier sur `http://localhost:3000`.
 2. Tranche 9 : rejouer `PW_CHANNEL=chrome pnpm e2e` après toute modification ; faire rejouer `auth.spec.ts` en CI.
 3. Décisions de Yvan pour la vidéo de vision (voir `docs/VIDEO.md`, « Points ouverts ») : voie de montage, plans générés ou motion design, voix.
 4. Balises : essai réel avec un téléphone par le lien https (repère, éloignement à l'extérieur, mode simulé en salle), puis décider si elles entrent dans le script de démonstration.

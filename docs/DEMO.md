@@ -8,14 +8,16 @@ Ce script correspond au parcours d'acceptation en 16 étapes du brief, rejoué a
 2. **Réinitialiser le jeu le jour de la démonstration** : « Changer de rôle » → « Préparation de la démonstration » → **Réinitialiser le scénario**. Les événements récents du jeu sont datés relativement à ce jour : réinitialisé la veille, « depuis hier » serait vide. Cette action efface les données de démonstration.
 3. Revenir à l'accueil : l'application s'ouvre sur « Mon élevage aujourd'hui » (éleveur de démonstration). Vérifier le registre : 8 animaux, 5 enregistrements depuis hier.
 4. Son : régler le volume du PC ; les réponses sont dites à voix haute par défaut (bouton « Réponses à voix haute » pour couper).
-5. Assistant IA : dans un terminal, `pnpm assistant:check` doit finir par « texte et appels de fonctions opérationnels ». Sinon, voir « Secours ».
+5. Assistant IA : dans un terminal, `pnpm assistant:check` doit finir par « texte et appels de fonctions opérationnels. Conversation en direct : opérationnelle ». L'étape 4 (synthèse vocale par tours) peut être indisponible : elle est limitée à 10 demandes par jour sur le palier gratuit, et n'empêche rien. Sinon, voir « Secours ».
 6. Pastille « Serveur joignable », case « Couper le réseau » décochée. Zoom du navigateur à 110 % en projection (1366 px).
 7. Ne jamais afficher le fichier `.env` ni le terminal de démarrage à l'écran partagé (la clé n'y est pas écrite, mais autant ne pas montrer de configuration).
 
 ## Script
 L'application s'ouvre en **affichage simple**. Pour montrer les natures d'information, les sources et les dates sans cliquer, activer « Affichage détaillé » en haut à droite ; sinon, ouvrir « Détails et preuves » sous une réponse.
 
-Version entièrement à la voix (IA activée, micro autorisé) : toucher le gros bouton « Parler », dire la question, écouter la réponse ; dire « Ajoute une observation sur B zéro dix-sept : elle mange moins depuis ce matin », écouter le brouillon, dire « je confirme ». « Discussion » rouvre le micro après chaque réponse.
+Version à la voix, en direct (IA activée, micro autorisé, à n'utiliser en public qu'après l'essai de `docs/ESSAIS.md` avec la voix et les haut-parleurs de la salle) : toucher le gros bouton « Parler », attendre le bip, dire la question ; la réponse est dite environ deux secondes après la fin de la phrase. Dire « Ajoute une observation sur B zéro dix-sept : elle mange moins depuis ce matin », écouter le brouillon, dire « je confirme ». Toucher « Interrompre » pour reprendre la parole pendant une réponse. À dire : l'assistant écoute et répond à la voix ; il ne parle pas en même temps qu'on lui parle ; ce qu'il dit s'affiche avec les données qu'il a lues ; il ne peut rien enregistrer sans la confirmation.
+
+Variante « incident » (après un essai réel avec le téléphone) : quand la balise sort de sa zone, toucher « Comprendre avec Sentinelle » sur l'alerte ; la synthèse de l'incident s'affiche (ce qui a été détecté, quand, la mesure, l'état actuel) ; toucher « Écouter et discuter » pour l'entendre et poser des questions.
 
 | Temps | À faire | À dire |
 |---|---|---|
@@ -37,6 +39,8 @@ Variante « balise » (à n'utiliser qu'après un essai réel avec le téléphon
 Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier ? », « Montre-moi B-017 », « Quelles informations manquent ? », « Ajoute une observation sur B-017 : … », « Pourquoi ta réponse a changé ? », « Quelle est la situation de mon élevage ? ». Avec l'IA, les formulations libres fonctionnent aussi.
 
 ## Secours
+- **La conversation en direct ne s'ouvre pas ou se coupe** : l'écran le dit et affiche le bouton de dictée (une phrase à la fois) ; le texte reste. Pour la désactiver franchement : vider `GEMINI_LIVE_MODEL` dans `sentinelle/.env`, puis relancer le serveur.
+- **La nouvelle version pose problème** : fermer le serveur, puis double-clic sur `lancer-secours.bat` (version du 21/11, voix par tours, même base et même configuration).
 - **L'IA ne répond pas ou répond lentement** : l'application repasse d'elle-même en lecture directe et l'annonce. Pour la couper franchement : ajouter `ASSISTANT_AI=off` dans `sentinelle/.env`, puis relancer le serveur. Tout le parcours ci-dessus passe sans IA, sauf la ligne 2:35.
 - **Modèle surchargé (503)** : un modèle de secours est configuré (`GEMINI_FALLBACK_MODEL`). `pnpm assistant:check` dit lequel répond.
 - **Pas de réseau** : la conversation est indisponible et le dit ; une observation préparée en saisie manuelle reste sur l'appareil et se transmet depuis « Déclarations » au retour du réseau.
@@ -46,8 +50,8 @@ Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier
 - Vidéo de secours : **non enregistrée** à ce jour.
 
 ## Limites à annoncer
-- Données synthétiques ; aucune intégration réelle ; aucun capteur posé sur un animal. La seule mesure automatique est la balise de démonstration (un téléphone), relue toutes les 4 secondes.
-- Voix : dictée d'une phrase (transcrite puis relue) et réponses dites par une voix de synthèse, pas de conversation parlée en continu. Couper « Réponses à voix haute » si la salle est bruyante ou si le son gêne. Pas de lots (volailles), pas de recherche documentaire dans cette version.
+- Données synthétiques ; aucune intégration réelle ; aucun capteur posé sur un animal. La seule mesure automatique est la balise de démonstration (un téléphone), relue toutes les 4 secondes. Sa distance est calculée par le téléphone à partir de son GPS et d'un repère : ce n'est pas une mesure radio de proximité avec l'ordinateur, et en intérieur la précision du GPS donne souvent « incertain ». Pas d'e-mail ni de notification : l'alerte est dans l'application.
+- Voix : conversation en direct en semi-duplex (on n'interrompt pas l'assistant à la voix, mais par un bouton) ; ses phrases sont dites au fur et à mesure, donc affichées avec les données lues plutôt que contrôlées avant d'être entendues. Vérifiée avec un micro simulé, pas encore avec une voix humaine. En secours : dictée d'une phrase et réponse par une voix de synthèse (10 réponses par jour par le service, puis voix de l'appareil). Pas de lots (volailles), pas de recherche documentaire : l'assistant lit des données structurées par des fonctions ; ce n'est ni un modèle réentraîné ni une recherche dans des documents.
 - Sélecteur de rôle = mode démonstration, pas une authentification.
 - L'assistant ne voit que ce qui est enregistré. Une absence d'observation n'est pas un bon état de santé.
 - Sur le palier gratuit de Google, le contenu envoyé au modèle peut servir à améliorer ses produits : acceptable avec des données synthétiques, à revoir avant toute donnée réelle.

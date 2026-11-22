@@ -14,6 +14,7 @@ export const DEMO_USERS = [
 ] as const;
 
 const TABLES = [
+  'device_incidents',
   'device_readings',
   'devices',
   'sessions',

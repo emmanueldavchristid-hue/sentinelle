@@ -12,9 +12,48 @@ const GLYPH: Record<Beacon['status'], string> = { INSIDE: '●', OUTSIDE: '▲',
 const TONE: Record<Beacon['status'], string> = { INSIDE: 'text-paturage', OUTSIDE: 'text-danger', UNCERTAIN: 'text-amber', NO_FIX: 'text-amber', NEVER: 'text-encre-2', SILENT: 'text-amber', STOPPED: 'text-encre-2' };
 
 /** Alerte dans l'application quand une balise est hors de sa zone. Aucune notification externe n'est envoyée. */
-export function BeaconAlert({ result, detailed, onSource, onAsk }: { result: ToolResult<BeaconsData> | null; detailed: boolean; onSource: (ref: string) => void; onAsk: () => void }) {
+/** Un incident terminé reste proposé à la lecture pendant ce délai, sous une forme calme. */
+const CLOSED_SHOWN_MS = 30 * 60_000;
+
+export function BeaconAlert({
+  result,
+  detailed,
+  onSource,
+  onAsk,
+  onUnderstand,
+}: {
+  result: ToolResult<BeaconsData> | null;
+  detailed: boolean;
+  onSource: (ref: string) => void;
+  onAsk: () => void;
+  /** Ouvre l'assistant sur l'incident enregistré : il en relit lui-même les faits. */
+  onUnderstand: (incidentId: string) => void;
+}) {
   const out = result?.data.beacons.filter((b) => result.data.alerts.includes(b.id)) ?? [];
-  if (!out.length) return null;
+  const incidents = result?.data.incidents ?? [];
+  const openFor = (deviceId: string) => incidents.find((i) => i.deviceId === deviceId && !i.closedAt);
+  if (!out.length) {
+    // Plus d'alerte en cours : l'incident terminé récemment reste accessible, sans ton d'urgence.
+    const closed = result ? incidents.find((i) => i.closedAt && Date.parse(result.asOf) - Date.parse(i.closedAt) < CLOSED_SHOWN_MS) : undefined;
+    if (!closed) return null;
+    return (
+      <div role="status" className="mb-4 border-l-[3px] border-paturage bg-surface-2 px-4 py-3">
+        <p className="v-field-flag text-paturage">Incident terminé</p>
+        <p className="mt-1 text-[16.5px]">
+          La balise <b className="num">{closed.label}</b>
+          {closed.animalId ? (
+            <>
+              , associée à <b className="num">{closed.animalId}</b>,
+            </>
+          ) : null}{' '}
+          n’est plus mesurée hors de sa zone depuis <span className="num">{fmtState(closed.closedAt!).slice(11, 16)}</span>.
+        </p>
+        <button type="button" className="btn btn-sm mt-2" onClick={() => onUnderstand(closed.id)}>
+          Comprendre avec Sentinelle
+        </button>
+      </div>
+    );
+  }
   return (
     <div role="alert" className="mb-4 border-2 border-danger bg-danger-soft px-4 py-3">
       <p className="v-field-flag text-danger">▲ Balise hors de sa zone{result!.data.simulated ? ' · données simulées' : ''}</p>
@@ -36,9 +75,19 @@ export function BeaconAlert({ result, detailed, onSource, onAsk }: { result: Too
         </p>
       ))}
       {detailed && <p className="v-meta mt-1">La balise mesure sa propre distance, pas la position de l’animal. Alerte affichée dans l’application uniquement.</p>}
-      <button type="button" className="btn btn-sm mt-2" onClick={onAsk}>
-        {detailed ? 'Demander : quel animal s’est éloigné ?' : 'Qui s’est éloigné ?'}
-      </button>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {out.map((b) => {
+          const inc = openFor(b.id);
+          return inc ? (
+            <button key={b.id} type="button" className="btn btn-sm btn-primary" onClick={() => onUnderstand(inc.id)}>
+              Comprendre avec Sentinelle{out.length > 1 ? ` : ${beaconName(b)}` : ''}
+            </button>
+          ) : null;
+        })}
+        <button type="button" className="btn btn-sm" onClick={onAsk}>
+          {detailed ? 'Demander : quel animal s’est éloigné ?' : 'Qui s’est éloigné ?'}
+        </button>
+      </div>
     </div>
   );
 }

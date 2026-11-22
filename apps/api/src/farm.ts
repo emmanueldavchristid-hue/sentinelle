@@ -565,13 +565,13 @@ export function farmTools(db: Db) {
     const p = parse(SourceParamsSchema, raw);
     const asOf = await dbNow(db);
     const sites = await loadSites(db, u.org_id);
-    const m = /^(OBS|REC|TASK|ANIMAL|SITE|DEVICE):([^@#]+)(?:@(\d{1,6}))?(?:#.*)?$/.exec(p.ref);
+    const m = /^(OBS|REC|TASK|ANIMAL|SITE|DEVICE|INCIDENT):([^@#]+)(?:@(\d{1,6}))?(?:#.*)?$/.exec(p.ref);
     const notFound = () => new HttpError(404, 'NOT_FOUND', 'Source introuvable dans votre périmètre');
     if (!m) throw notFound();
     const [, kind, id, revStr] = m as unknown as [string, string, string, string | undefined];
     let data: SourceData;
-    if (kind === 'DEVICE') {
-      const d = await beacons.source(u, id);
+    if (kind === 'DEVICE' || kind === 'INCIDENT') {
+      const d = kind === 'DEVICE' ? await beacons.source(u, id) : await beacons.incidentSource(u, id);
       if (!d) throw notFound();
       data = d;
     } else if (kind === 'OBS') {
@@ -788,7 +788,7 @@ export function farmTools(db: Db) {
     return envelope('prepare_observation', { text: p.text ?? null, contextAnimalId: p.contextAnimalId ?? null }, asOf, null, statements, data, [...(chosen ? [{ ref: `ANIMAL:${chosen.id}`, label: chosen.tag }] : []), ...(possibleDuplicate ? [possibleDuplicate] : [])], limits);
   }
 
-  return { situation, changes, findAnimal, animal, missing, source, prepareObservation, beacons: beacons.read };
+  return { situation, changes, findAnimal, animal, missing, source, prepareObservation, beacons: beacons.read, incident: beacons.incident };
 }
 
 export type FarmTools = ReturnType<typeof farmTools>;
@@ -810,5 +810,10 @@ export function registerFarm(ctx: Ctx): FarmTools {
   ctx.app.get('/api/farm/sources', async (req) => tools.source(await ctx.currentUser(req), req.query ?? {}));
   ctx.app.post('/api/farm/observations/draft', async (req) => tools.prepareObservation(await ctx.currentUser(req), req.body));
   ctx.app.get('/api/farm/devices', async (req) => tools.beacons(await ctx.currentUser(req)));
+  // Incident d'éloignement : « latest » désigne le plus récent (ouvert d'abord).
+  ctx.app.get('/api/farm/incidents/:id', async (req) => {
+    const id = (req.params as { id: string }).id;
+    return tools.incident(await ctx.currentUser(req), id === 'latest' ? {} : { incidentId: id });
+  });
   return tools;
 }

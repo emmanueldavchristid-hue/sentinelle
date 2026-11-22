@@ -91,7 +91,7 @@ function spokenText(reply: AssistantReply | null, sites: { id: string; name: str
     said = reply.text ?? reply.results[0]?.statements.slice(0, 4).map((st) => st.text).join(' ') ?? reply.notice ?? '';
   }
   return said
-    .replace(/\[(?:OBS|REC|TASK|ANIMAL|SITE|DEVICE):[^\]]+\]/g, '')
+    .replace(/\[(?:OBS|REC|TASK|ANIMAL|SITE|DEVICE|INCIDENT):[^\]]+\]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -110,6 +110,8 @@ interface LiveTurn {
   said: string;
   results: ToolResult[];
   acted: boolean;
+  /** Ce qui a ouvert ce tour quand ce n'est pas une phrase de l'utilisateur (« Écouter l'incident … »). */
+  kick: string | null;
   /** Identifiant donné par le serveur au brouillon préparé pendant ce tour : une confirmation à la voix le vise, lui et pas un autre. */
   draftId: string | null;
 }
@@ -140,6 +142,7 @@ function ExchangeView({
   onManual,
   onConfirm,
   onDiscard,
+  onDiscuss,
 }: {
   ex: Exchange;
   detailed: boolean;
@@ -154,6 +157,8 @@ function ExchangeView({
   onManual: () => void;
   onConfirm: (v: DraftValues) => void;
   onDiscard: () => void;
+  /** Incident : ouvrir la conversation à la voix sur cet incident (ou, à défaut, le faire lire). */
+  onDiscuss: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const draft = draftOf(ex);
@@ -184,7 +189,7 @@ function ExchangeView({
       </span>
       <p className="max-w-[64ch] text-[16px] leading-[1.5] whitespace-pre-line">
         {/* Les identifiants cités par le modèle deviennent des sources cliquables (ils ont été contrôlés par le serveur). */}
-        {reply.text.split(/\[((?:OBS|REC|TASK|ANIMAL|SITE|DEVICE):[A-Za-z0-9@-]+)\]/g).map((part, i) => (i % 2 ? <SourceChip key={i} sourceRef={part} onSource={onSource} /> : part))}
+        {reply.text.split(/\[((?:OBS|REC|TASK|ANIMAL|SITE|DEVICE|INCIDENT):[A-Za-z0-9@-]+)\]/g).map((part, i) => (i % 2 ? <SourceChip key={i} sourceRef={part} onSource={onSource} /> : part))}
       </p>
     </div>
   ) : null;
@@ -260,6 +265,15 @@ function ExchangeView({
       </button>
     </div>
   );
+  // Synthèse d'un incident : la proposition d'écouter et de discuter vient après le texte, jamais à sa place.
+  const discussButton = reply?.results[0]?.tool === 'incident' && !!reply.results[0].data && !reply.live && (
+    <p>
+      <button type="button" className="btn btn-primary" onClick={onDiscuss}>
+        <SpeakerIcon />
+        <span className="ml-2">Écouter et discuter</span>
+      </button>
+    </p>
+  );
   const form = draft && draftOpen && <DraftCard id={`d-${ex.id}`} draft={draft.data} sites={sites} busy={ex.draft === 'saving'} serverErrors={draftErrors} onConfirm={onConfirm} onDiscard={onDiscard} onSource={onSource} />;
 
   return (
@@ -301,6 +315,7 @@ function ExchangeView({
           {ex.draft === 'discarded' && <p className="v-notice">Brouillon abandonné. Rien n’a été enregistré.</p>}
           {receiptBlocks}
           {unknownHelp}
+          {discussButton}
           {others.length > 0 && !draft && <p className="v-meta">{sourceCount ? `${sourceCount} source${sourceCount > 1 ? 's' : ''} mise${sourceCount > 1 ? 's' : ''} en évidence dans la constellation et la chronologie.` : 'Aucune source à mettre en évidence.'}</p>}
         </div>
       )}
@@ -309,7 +324,7 @@ function ExchangeView({
           {updateCard}
           {compareCard}
           {reply.text ? (
-            <p className="max-w-[60ch] text-[18px] leading-[1.5] whitespace-pre-line">{plainSentence(reply.text.replace(/\s*\[(?:OBS|REC|TASK|ANIMAL|SITE|DEVICE):[^\]]+\]/g, ''))}</p>
+            <p className="max-w-[60ch] text-[18px] leading-[1.5] whitespace-pre-line">{plainSentence(reply.text.replace(/\s*\[(?:OBS|REC|TASK|ANIMAL|SITE|DEVICE|INCIDENT):[^\]]+\]/g, ''))}</p>
           ) : (
             others[0] && <PlainAnswer result={others[0]} />
           )}
@@ -320,7 +335,8 @@ function ExchangeView({
           {ex.draft === 'discarded' && <p className="v-notice">Brouillon abandonné. Rien n’a été enregistré.</p>}
           {receiptBlocks}
           {unknownHelp}
-          {listenButton}
+          {discussButton}
+          {!discussButton && listenButton}
           {(others.length > 0 || draft) && (
             <details className="v-meta">
               <summary className="cursor-pointer text-[14.5px]">Détails et preuves{sourceCount ? ` (${sourceCount} source${sourceCount > 1 ? 's' : ''})` : ''}</summary>
@@ -339,7 +355,7 @@ function ExchangeView({
   );
 }
 
-export function FarmHome({ animalId }: { animalId: string | null }) {
+export function FarmHome({ animalId, incidentId = null }: { animalId: string | null; incidentId?: string | null }) {
   const { session, db, connection, health, syncNow, bumpOutbox, outboxVersion } = useApp();
   const exchanges = useExchanges();
   const fresh = useFresh();
@@ -453,7 +469,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
           { role: 'model' as const, text: `${e.reply!.text ?? e.reply!.results.flatMap((r) => r.statements.slice(0, 3).map((st) => st.text)).join(' ')} ${e.reply!.results.map((r) => `(fonction ${r.tool}, état des données asOf=${r.asOf})`).join(' ')}`.slice(0, 1900) },
         ]);
       try {
-        const reply = await api<AssistantReply>('/api/assistant/ask', { method: 'POST', session, timeoutMs: 45_000, body: { text: q, contextAnimalId: animalId ?? undefined, contextRef: sourceRef ?? [...highlight][0], compare, history } });
+        const reply = await api<AssistantReply>('/api/assistant/ask', { method: 'POST', session, timeoutMs: 45_000, body: { text: q, contextAnimalId: animalId ?? undefined, contextIncidentId: incidentId ?? undefined, contextRef: sourceRef ?? [...highlight][0], compare, history } });
         const first = reply.results[0] ?? null;
         const key = first ? resultKey(first) : null;
         const previous = key ? all.find((e) => e.key === key && firstResult(e)) : undefined;
@@ -478,7 +494,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
       }
       answerRef.current?.focus({ preventScroll: true });
     },
-    [session, animalId, sourceRef, highlight],
+    [session, animalId, incidentId, sourceRef, highlight],
   );
 
   const manualDraft = useCallback(async () => {
@@ -609,6 +625,8 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
   liveModel.current = liveInfo?.model ?? null;
   const confirmRef = useRef(confirmDraft);
   confirmRef.current = confirmDraft;
+  /** Libellé du premier tour d'une conversation ouverte par un bouton plutôt que par une phrase. */
+  const liveKick = useRef<string | null>(null);
   const onLiveActive = useCallback((on: boolean) => {
     liveOn.current = on;
     if (on) {
@@ -628,7 +646,8 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
       if (!t) {
         const ex = newExchange('…');
         conversation.add(ex);
-        t = { id: ex.id, heard: '', said: '', results: [], acted: false, draftId: null };
+        t = { id: ex.id, heard: '', said: '', results: [], acted: false, kick: liveKick.current, draftId: null };
+        liveKick.current = null;
         turns.set(n, t);
       }
       return t;
@@ -652,7 +671,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
               live: true,
             }
           : null;
-      conversation.patch(t.id, { question: t.heard.trim() || '…', reply, pending: !reply });
+      conversation.patch(t.id, { question: t.heard.trim() || t.kick || '…', reply, pending: !reply });
     };
     /** Le brouillon visé par une confirmation à la voix : celui que le serveur a désigné, encore ouvert, au contenu inchangé. */
     const draftFor = (draftId: string, fingerprint: string) => {
@@ -720,6 +739,46 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
     }
   }, []);
 
+  // ---------- Incident d'éloignement : « Comprendre avec Sentinelle » ----------
+  /**
+   * Ouvre l'assistant sur un incident enregistré : la synthèse est lue tout de suite dans les données (ce qui a été détecté,
+   * quand, la dernière donnée reçue, l'état actuel, les limites), sans IA et sans rien demander à l'utilisateur.
+   */
+  const openIncident = useCallback(
+    async (id: string) => {
+      const ex = newExchange(`Comprendre l’incident ${id}`);
+      conversation.add(ex);
+      try {
+        const r = await api<ToolResult>(`/api/farm/incidents/${encodeURIComponent(id)}`, { session });
+        conversation.patch(ex.id, { pending: false, reply: { mode: 'direct', provider: null, intent: 'incident', text: null, notice: 'Synthèse lue directement dans l’incident enregistré et dans l’état actuel de la balise, sans IA.', results: [r], ungrounded: false, suggestions: [] } });
+        setBeaconTick((n) => n + 1);
+      } catch (e) {
+        const off = e instanceof NetworkError;
+        conversation.patch(ex.id, { pending: false, offline: off, error: off ? 'Serveur injoignable : l’incident ne peut pas être relu pour l’instant. Rien n’est inventé à sa place.' : e instanceof ApiFailure && e.status === 404 ? `Aucun incident « ${id} » n’est enregistré dans votre périmètre.` : errorMessage(e) });
+      }
+      answerRef.current?.focus({ preventScroll: true });
+    },
+    [session],
+  );
+  const shownIncident = useRef<string | null>(null);
+  useEffect(() => {
+    if (!incidentId || shownIncident.current === incidentId) return;
+    shownIncident.current = incidentId;
+    void openIncident(incidentId);
+  }, [incidentId, openIncident]);
+  const understand = (id: string) => (incidentId === id ? void openIncident(id) : go(`elevage/incident/${encodeURIComponent(id)}`));
+  /** « Écouter et discuter » : en direct si possible (l'assistant commence par résumer l'incident), sinon lecture à voix haute. */
+  const discuss = (ex: Exchange) => {
+    const id = String(firstResult(ex)?.params.incidentId ?? '');
+    if (liveMode && liveHandle.current && id) {
+      liveKick.current = `Écouter l’incident ${id}`;
+      liveHandle.current.startOnIncident(id);
+    } else {
+      say(ex.id, spokenText(ex.reply, sites));
+      inputRef.current?.focus();
+    }
+  };
+
   const onSource = useCallback((ref: string) => setSourceRef(ref), []);
   const timeline = animalId ? (animal.data?.data.timeline ?? []) : (changes.data?.data.events ?? []);
   const timelineState = animalId ? animal : changes;
@@ -744,7 +803,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
         </p>
       )}
 
-      <BeaconAlert result={beacons.data} detailed={detailed} onSource={onSource} onAsk={() => ask('Quel animal s’est éloigné ?')} />
+      <BeaconAlert result={beacons.data} detailed={detailed} onSource={onSource} onAsk={() => ask('Quel animal s’est éloigné ?')} onUnderstand={understand} />
 
       {/* Registre : la situation en une seule ligne réglée */}
       {s ? (
@@ -907,7 +966,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
           {/* Parler en direct : l'assistant répond à la voix dès que la personne a fini. Sinon, dictée d'une phrase à la fois. */}
           {liveMode && (
             <div className="mt-4">
-              <LiveTalk session={session} animalId={animalId} offline={offline} maxSeconds={liveInfo!.maxSeconds} quiet={!detailed} handle={liveHandle} onMessage={onLive} onActive={onLiveActive} onFailedToOpen={setLiveBroken} />
+              <LiveTalk session={session} animalId={animalId} incidentId={incidentId} offline={offline} maxSeconds={liveInfo!.maxSeconds} quiet={!detailed} handle={liveHandle} onMessage={onLive} onActive={onLiveActive} onFailedToOpen={setLiveBroken} />
               {detailed && (
                 <p className="mt-2 flex flex-wrap items-center gap-2">
                   <button type="button" className="v-chip" aria-pressed={true} onClick={() => setLivePref(false)}>
@@ -1075,6 +1134,7 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
                   conversation.patch(ex.id, { draft: 'discarded' });
                   if (liveOn.current) liveHandle.current?.send({ type: 'screen', event: 'DISCARDED' });
                 }}
+                onDiscuss={() => discuss(ex)}
               />
             ))}
           </div>

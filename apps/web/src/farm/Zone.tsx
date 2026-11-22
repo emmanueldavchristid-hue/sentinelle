@@ -2,7 +2,8 @@ import { beaconName, BEACON_STATUS_LABELS, type Beacon } from '@sentinelle/contr
 
 /**
  * Zone autour du repère : la vue « déplacement » des balises de démonstration.
- * Le repère (l'ordinateur, là où il a été fixé) est au centre. Chaque balise est placée à la DISTANCE mesurée.
+ * Le repère (le point fixé depuis le téléphone, par exemple près de l'ordinateur) est au centre. Chaque balise est placée à
+ * la DISTANCE que son téléphone calcule à partir de son GPS : ce n'est pas une mesure radio de proximité.
  * La direction n'est pas mesurée : chaque balise garde un rayon fixe, choisi seulement pour la lisibilité.
  * Les points plus pâles sur le même rayon sont ses mesures précédentes : on voit si elle s'éloigne ou revient.
  * Un trait le long du rayon montre la précision annoncée de la dernière mesure.
@@ -28,7 +29,7 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
         <h2 id="zone-h" className="v-display text-[22px]">
           Zone autour du repère
         </h2>
-        <p className="text-[13.5px] text-[#b9c8c0]">Chaque balise est placée à la distance qu’elle mesure. La direction n’est pas mesurée.</p>
+        <p className="text-[13.5px] text-[#b9c8c0]">Chaque balise est placée à la distance que son téléphone calcule depuis le repère. La direction n’est pas mesurée.</p>
         {simulated && <p className="mt-1 inline-block bg-[#f2b24a] px-2 py-0.5 text-[13.5px] font-bold text-[#0e2b27]">DONNÉES SIMULÉES</p>}
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="relative block h-auto w-full" role="group" aria-label="Schéma de la zone : distance de chaque balise au repère. Les mêmes informations figurent dans la liste des balises.">
@@ -96,6 +97,11 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
               <text x={tx} y={p.y + 16} textAnchor={side} fontSize="15" className="v-halo v-sky-sub">
                 {beyond ? 'plus de ' : ''}
                 {Math.round(l.distanceM)} m · {BEACON_STATUS_LABELS[b.status].toLowerCase()}
+              </text>
+              {/* D'où vient la mesure, sa précision, et son ancienneté si la balise ne transmet plus. */}
+              <text x={tx} y={p.y + 34} textAnchor={side} fontSize="13.5" className="v-halo v-sky-sub">
+                {l.source === 'SIMULATED' ? 'distance simulée' : `GPS du téléphone${acc > 0 ? `, ± ${Math.round(acc)} m` : ''}`}
+                {stale && b.silentSeconds !== null ? ` · dernière mesure il y a ${b.silentSeconds < 90 ? `${b.silentSeconds} s` : `${Math.round(b.silentSeconds / 60)} min`}` : ''}
               </text>
             </g>
           );
