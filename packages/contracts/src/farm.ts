@@ -218,6 +218,11 @@ export interface IncidentSummary {
   animalId: string | null;
   openedAt: string;
   closedAt: string | null;
+  /**
+   * E-mail d'alerte de cet incident, tel que le fournisseur d'envoi l'a réellement traité. SENT : accepté par le fournisseur
+   * (pas « lu »). FAILED : rien n'est parti. SENDING : pas encore de réponse. Absent ou null : aucun envoi n'a été tenté.
+   */
+  email?: { status: 'SENDING' | 'SENT' | 'FAILED'; provider: string | null; to: string | null; at: string | null; error: string | null } | null;
 }
 export interface IncidentData extends IncidentSummary {
   /** Règle appliquée, en clair, et seuil au moment de l'incident. */

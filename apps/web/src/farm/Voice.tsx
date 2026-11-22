@@ -296,7 +296,7 @@ export function Dictation({
   );
 
   return (
-    <div className={big ? 'v-voice v-voice-big' : 'v-voice'}>
+    <div className={big ? 'v-voice v-voice-big' : 'v-voice'} data-live={big && recording ? 'listening' : undefined}>
       <div className={`flex flex-wrap items-center gap-3 ${big ? 'justify-start' : ''}`}>
         <button type="button" className={big ? 'v-mic-big' : 'v-mic'} data-recording={recording ? 'true' : undefined} data-busy={phase === 'starting' || phase === 'transcribing' ? 'true' : undefined} onClick={recording ? stop : start} disabled={!recording && (!!blocked || phase !== 'idle')} aria-describedby="voice-status" aria-label={big ? label : undefined}>
           {recording ? <span className={big ? 'v-mic-stop' : 'v-mic-dot'} aria-hidden="true" /> : <MicIcon size={big ? 38 : 18} />}
@@ -304,7 +304,7 @@ export function Dictation({
         </button>
         {big && (
           <span className="min-w-0">
-            <span className="v-display block text-[24px]">{recording ? 'Je vous écoute' : phase === 'transcribing' ? 'Je transcris…' : phase === 'starting' ? 'Micro…' : 'Parler'}</span>
+            <span className="v-voice-state">{recording ? 'Je vous écoute' : phase === 'transcribing' ? 'Je transcris…' : phase === 'starting' ? 'Micro…' : 'Parler'}</span>
             {recording && (
               <span className="num text-[15px] text-encre-2" aria-hidden="true">
                 {mmss(elapsed)} / {mmss(maxSeconds)}

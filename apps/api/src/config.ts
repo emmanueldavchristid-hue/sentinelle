@@ -61,6 +61,18 @@ export const config = {
   liveSilenceMs: int(process.env.LIVE_SILENCE_MS, 700, 300, 2000),
   /** Durée cumulée des conversations en direct depuis le démarrage du serveur : borne la dépense, même si le lien public circule. */
   liveMaxTotalSeconds: int(process.env.LIVE_MAX_TOTAL_SECONDS, 3600, 60, 86_400),
+  /**
+   * E-mail d'alerte d'éloignement : désactivé par défaut. Il faut ALERT_EMAIL=on, la clé du fournisseur, le destinataire de test
+   * (une seule adresse, fixée ici et nulle part ailleurs) et l'adresse publique de l'application pour le lien du message.
+   */
+  alertEmail: {
+    enabled: (process.env.ALERT_EMAIL ?? '').trim().toLowerCase() === 'on',
+    provider: (process.env.ALERT_EMAIL_PROVIDER ?? '').trim().toLowerCase() || 'resend',
+    apiKey: (process.env.RESEND_API_KEY ?? '').trim(),
+    to: (process.env.ALERT_EMAIL_TO ?? '').trim(),
+    from: (process.env.ALERT_EMAIL_FROM ?? '').trim() || 'Sentinelle (démonstration) <onboarding@resend.dev>',
+    publicUrl: (process.env.PUBLIC_URL ?? '').trim().replace(/\/+$/, ''),
+  },
   assistantTimeoutMs: int(process.env.ASSISTANT_TIMEOUT_MS, 20_000, 2_000, 120_000),
   assistantMaxRequestsPerSession: int(process.env.ASSISTANT_MAX_REQUESTS_PER_SESSION, 40, 1, 1000),
   assistantMaxToolRounds: int(process.env.ASSISTANT_MAX_TOOL_ROUNDS, 4, 1, 8),

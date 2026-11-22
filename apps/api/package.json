@@ -15,7 +15,8 @@
     "user:list": "tsx src/users.ts list",
     "user:disable": "tsx src/users.ts disable",
     "user:enable": "tsx src/users.ts enable",
-    "assistant:check": "tsx src/assistant-check.ts"
+    "assistant:check": "tsx src/assistant-check.ts",
+    "alert:check": "tsx src/alert-check.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.16",

@@ -87,7 +87,7 @@ export function StatementList({ statements, onSource, max = 7 }: { statements: S
       {shown.map((s, i) => (
         <div key={i} className="v-statement" data-nature={s.nature}>
           <NatureLabel nature={s.nature} />
-          <p className="max-w-[64ch] text-[15.5px] leading-[1.45]">{s.text}</p>
+          <p className="max-w-[64ch] text-[15.5px] leading-[1.45]">{typo(s.text)}</p>
           {s.sources.length > 0 && (
             <div>
               {s.sources.slice(0, 6).map((r) => (
@@ -217,8 +217,11 @@ export function Timeline({ events, highlight, fresh, onSource, empty, simple = f
 // ---------- Affichage simple : la réponse en phrases courtes, les preuves à un clic ----------
 
 /** Retire d'une phrase les précisions techniques entre parenthèses (dates de réception, révisions, précision, source). */
+/** Typographie française à l'affichage : espaces insécables dans les guillemets et avant « : ; ? ! ». Le texte n'est pas modifié. */
+export const typo = (text: string): string => text.replace(/« /g, '«\u00a0').replace(/ »/g, '\u00a0»').replace(/ ([:;?!])/g, '\u00a0$1');
+
 export function plainSentence(text: string): string {
-  return text
+  const plain = text
     .replace(/\s*\((?:[^()]*(?:reçu|révision|précision|source :|\d{2}\/\d{2}\/\d{4})[^()]*)\)/g, '')
     // Après le retrait d'une parenthèse : pas d'espace avant un point ou une virgule, pas de point doublé.
     // L'espace avant « : » et « ; » est voulue en français : elle est conservée.
@@ -226,6 +229,7 @@ export function plainSentence(text: string): string {
     .replace(/\.{2,}/g, '.')
     .replace(/\s{2,}/g, ' ')
     .trim();
+  return typo(plain);
 }
 
 /** Réponse en mode simple : quelques phrases lisibles, sans libellés ni identifiants. Rien n'est ajouté au texte du serveur. */

@@ -351,7 +351,7 @@ export function LiveTalk({
   const active = phase !== 'idle';
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const label = phase === 'listening' ? 'Arrêter la conversation' : phase === 'speaking' ? 'Arrêter la conversation' : phase === 'connecting' ? 'Connexion…' : 'Parler';
-  const title = phase === 'listening' ? 'Je vous écoute' : phase === 'speaking' ? 'Je réponds' : phase === 'connecting' ? 'Micro…' : 'Parler';
+  const title = phase === 'listening' ? 'Je vous écoute' : phase === 'speaking' ? 'Je réponds' : phase === 'connecting' ? 'Ouverture…' : 'Parler';
   const status =
     phase === 'listening' ? (
       <>
@@ -383,7 +383,17 @@ export function LiveTalk({
           {active && phase !== 'connecting' ? <span className="v-mic-stop" aria-hidden="true" /> : <MicIcon />}
         </button>
         <span className="min-w-0">
-          <span className="v-display block text-[24px]">{title}</span>
+          <span className="v-voice-state">
+            {title}
+            {phase === 'speaking' && (
+              <span className="v-wave" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+                <i />
+              </span>
+            )}
+          </span>
           {active && phase !== 'connecting' && (
             <span className="num text-[15px] text-encre-2" aria-hidden="true">
               {mmss(elapsed)} / {mmss(maxSeconds)}

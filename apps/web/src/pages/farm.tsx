@@ -790,7 +790,29 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
           <p className="v-kicker">
             {s?.org.name ?? session?.orgName} · {dayFmt.format(new Date())}
           </p>
-          <h1 className="v-display mt-1.5 text-[34px] sm:text-[46px]">Mon élevage aujourd’hui</h1>
+          <h1 className="v-title mt-2">Mon élevage aujourd’hui</h1>
+          {/* État des données : ce que l'écran sait, et depuis quand. Lu sur le serveur, jamais supposé. */}
+          {s && situation.data && (
+            <p className="v-lead mt-3">
+              {s.sync.lastServerReceipt ? (
+                <>
+                  Dernier enregistrement reçu le <b className="num">{fmtInstant(s.sync.lastServerReceipt).replace(/\/\d{4}/, '')}</b>.
+                </>
+              ) : (
+                'Aucun enregistrement reçu pour l’instant.'
+              )}{' '}
+              {/* Hors connexion, la lecture peut être ancienne : sa date est donnée en entier (le bandeau ci-dessous explique le reste). */}
+              {offline || situation.local ? (
+                <>
+                  Dernière lecture sur le serveur : <span className="num">{fmtState(situation.data.asOf).slice(0, 16)}</span>.
+                </>
+              ) : (
+                <>
+                  Données lues à <span className="num">{fmtState(situation.data.asOf).slice(11, 16)}</span>.
+                </>
+              )}
+            </p>
+          )}
         </div>
         <button type="button" className="v-chip" aria-pressed={detailed} onClick={() => display.set(!detailed)} title="Affiche d’emblée les natures d’information, les sources, les dates et les limites">
           Affichage détaillé : {detailed ? 'oui' : 'non'}
@@ -810,16 +832,16 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
         <div className="v-ledger" data-simple={detailed ? undefined : 'true'} role="group" aria-label="Situation enregistrée">
           <button type="button" className="v-ledger-cell" onClick={() => ask('Quelle est la situation de mon élevage ?')}>
             <span className="v-kicker">{detailed ? 'Enregistré' : s.animals.total > 1 ? 'Animaux' : 'Animal'}</span>
-            <span className="v-figure text-[40px]">{s.animals.total}</span>
+            <span className="v-figure">{s.animals.total}</span>
             {detailed && (
               <span className="v-meta">
                 {s.animals.total > 1 ? 'animaux identifiés' : 'animal identifié'} · {s.sites.length} sites · {s.lots.length ? `${s.lots.length} lots` : 'aucun lot'}
               </span>
             )}
           </button>
-          <button type="button" className="v-ledger-cell" onClick={() => ask(QUICK[0]!)}>
+          <button type="button" className="v-ledger-cell" data-accent={s.recent.counts.total > 0 ? 'true' : undefined} onClick={() => ask(QUICK[0]!)}>
             <span className="v-kicker">{detailed ? 'Depuis hier' : 'Nouveautés depuis hier'}</span>
-            <span className="v-figure text-[40px]">{s.recent.counts.total}</span>
+            <span className="v-figure">{s.recent.counts.total}</span>
             {detailed && (
               <span className="v-meta">
                 {s.recent.counts.total > 1 ? 'enregistrements reçus' : 'enregistrement reçu'} : {s.recent.counts.added} ajout{s.recent.counts.added > 1 ? 's' : ''}, {s.recent.counts.corrected} correction{s.recent.counts.corrected > 1 ? 's' : ''}
@@ -828,7 +850,7 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
           </button>
           <button type="button" className="v-ledger-cell" onClick={() => ask(QUICK[1]!)}>
             <span className="v-kicker">À compléter</span>
-            <span className="v-figure text-[40px]">{s.toComplete.total}</span>
+            <span className="v-figure">{s.toComplete.total}</span>
             {detailed && (
               <span className="v-meta">
                 {s.toComplete.total > 1 ? 'informations à compléter ou à vérifier' : 'information à compléter ou à vérifier'}
@@ -839,7 +861,7 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
           {(detailed || pendingOutbox > 0) && (
             <button type="button" className="v-ledger-cell" onClick={() => (pendingOutbox ? go('envois') : setReloads((n) => n + 1))} title={pendingOutbox ? 'Ouvrir les déclarations à transmettre' : 'Relire les données sur le serveur'}>
               <span className="v-kicker">{detailed ? 'Synchronisation' : 'À transmettre'}</span>
-              <span className="v-figure pt-2 text-[26px]">{detailed ? (s.sync.lastServerReceipt ? fmtInstant(s.sync.lastServerReceipt).replace(/\/\d{4}/, '') : 'aucune') : pendingOutbox}</span>
+              <span className="v-figure v-figure-sm pt-2">{detailed ? (s.sync.lastServerReceipt ? fmtInstant(s.sync.lastServerReceipt).replace(/\/\d{4}/, '') : 'aucune') : pendingOutbox}</span>
               {detailed && (
                 <span className="v-meta">
                   dernière réception par le serveur · données lues à <span className="num">{fmtState(situation.data!.asOf).slice(11)}</span>
@@ -881,7 +903,7 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
             <div className="flex flex-wrap items-end justify-between gap-3 border-b-2 border-encre pb-2">
               <div>
                 {detailed && <p className="v-kicker">Chronologie</p>}
-                <h2 id="chrono-h" className="v-display mt-0.5 text-[26px]">
+                <h2 id="chrono-h" className="v-display mt-0.5 text-[28px]">
                   {animalId ? `${animalId}, tout ce qui est enregistré` : 'Reçu depuis hier'}
                 </h2>
               </div>
@@ -944,7 +966,7 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
 
         {/* Conversation */}
         <aside className="min-w-0 lg:sticky lg:top-4" aria-labelledby="talk-h">
-          <h2 id="talk-h" className="v-display text-[26px]">
+          <h2 id="talk-h" className="v-display text-[28px]">
             Parler à mon élevage
           </h2>
           {detailed ? (

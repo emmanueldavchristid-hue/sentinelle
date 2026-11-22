@@ -5,6 +5,7 @@ import { formatInstant } from '@sentinelle/domain';
 import { DEFAULT_BEACON_LABEL, type Beacon, type BeaconReading, type BeaconsData, type IncidentData, type IncidentSummary, type SourceData, type Statement, type ToolResult, type ZoneState } from '@sentinelle/contracts';
 import type { Db, Queryable } from './db.js';
 import { HttpError, parse, sha256, type User } from './http.js';
+import { incidentMail, MailError, maskEmail, type AlertNotifier } from './notify.js';
 
 /**
  * Balises de démonstration : un téléphone joue le rôle d'un capteur de proximité (idée de Mouhi, 21/11).
@@ -17,7 +18,9 @@ import { HttpError, parse, sha256, type User } from './http.js';
  * - la source de chaque mesure (GPS du téléphone, ou distance SIMULÉE à la main) est stockée et affichée dans chaque preuve ;
  * - « hors zone » n'est dit que si la distance dépasse le seuil même en tenant compte de la précision ; sinon « incertain » ;
  * - une balise muette n'est pas « sortie » : on dit seulement depuis quand rien n'a été reçu ;
- * - aucune coordonnée géographique n'est transmise ni stockée ; aucune notification externe n'est envoyée ;
+ * - aucune coordonnée géographique n'est transmise ni stockée ;
+ * - aucune notification externe par défaut. Si l'e-mail d'alerte est activé côté serveur (voir notify.ts), UN message part par
+ *   épisode, vers un destinataire de test fixé côté serveur, et son statut réel est gardé avec l'incident ;
  * - la distance est calculée par le téléphone (son GPS, un repère fixé par l'utilisateur) : ce n'est pas une mesure radio
  *   de la proximité avec l'ordinateur ;
  * - un éloignement ouvre UN incident par épisode (table device_incidents), qui garde les faits qui l'ont justifié.
@@ -106,25 +109,43 @@ interface IncidentRow {
   max_distance_m: number;
   closed_at: unknown;
   close_reason: 'BACK_INSIDE' | 'DEVICE_STOPPED' | null;
+  email_status: 'SENDING' | 'SENT' | 'FAILED' | null;
+  email_provider: string | null;
+  email_to_masked: string | null;
+  email_at: unknown;
+  email_error: string | null;
 }
-const summaryOf = (r: IncidentRow): IncidentSummary => ({ id: r.id, deviceId: r.device_id, label: r.label, animalId: r.animal_id, openedAt: iso(r.opened_at), closedAt: r.closed_at ? iso(r.closed_at) : null });
+const summaryOf = (r: IncidentRow): IncidentSummary => ({
+  id: r.id,
+  deviceId: r.device_id,
+  label: r.label,
+  animalId: r.animal_id,
+  openedAt: iso(r.opened_at),
+  closedAt: r.closed_at ? iso(r.closed_at) : null,
+  email: r.email_status ? { status: r.email_status, provider: r.email_provider, to: r.email_to_masked, at: r.email_at ? iso(r.email_at) : null, error: r.email_error } : null,
+});
 
 /**
  * Suit l'épisode d'éloignement d'une balise à chaque mesure reçue. « Hors zone » ouvre un incident s'il n'y en a pas d'ouvert
  * (sinon met à jour la distance la plus grande) ; « dans la zone » le ferme. Une mesure incertaine ou sans position ne
  * l'ouvre ni ne le ferme : on ne conclut pas quand la précision ne le permet pas.
+ * Renvoie l'identifiant de l'incident s'il vient d'être OUVERT par cette mesure (c'est le seul moment où une alerte part).
  */
-async function trackIncident(q: Queryable, d: DeviceRow, zone: ZoneState, reading: { source: BeaconReading['source']; observedAt: string; distanceM: number | null }, accuracy: number | null) {
+async function trackIncident(q: Queryable, d: DeviceRow, zone: ZoneState, reading: { source: BeaconReading['source']; observedAt: string; distanceM: number | null }, accuracy: number | null): Promise<string | null> {
   if (zone === 'OUTSIDE' && reading.distanceM !== null) {
-    await q.query(
+    const id = `INC-${randomBytes(4).toString('hex').toUpperCase().slice(0, 5)}`;
+    const opened = await q.query<{ id: string }>(
       `INSERT INTO device_incidents(id, org_id, device_id, animal_id, label, rule, radius_m, source, trigger_observed_at, trigger_distance_m, trigger_accuracy_m, max_distance_m)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$10)
-       ON CONFLICT (device_id) WHERE closed_at IS NULL DO UPDATE SET max_distance_m = GREATEST(device_incidents.max_distance_m, EXCLUDED.max_distance_m)`,
-      [`INC-${randomBytes(4).toString('hex').toUpperCase().slice(0, 5)}`, d.org_id, d.id, d.animal_id, d.label, OUTSIDE_RULE, d.radius_m, reading.source, reading.observedAt, reading.distanceM, accuracy],
+       ON CONFLICT (device_id) WHERE closed_at IS NULL DO NOTHING RETURNING id`,
+      [id, d.org_id, d.id, d.animal_id, d.label, OUTSIDE_RULE, d.radius_m, reading.source, reading.observedAt, reading.distanceM, accuracy],
     );
+    if (opened.rows.length) return id;
+    await q.query('UPDATE device_incidents SET max_distance_m = GREATEST(max_distance_m, $2) WHERE device_id = $1 AND closed_at IS NULL', [d.id, reading.distanceM]);
   } else if (zone === 'INSIDE') {
     await q.query(`UPDATE device_incidents SET closed_at = now(), close_reason = 'BACK_INSIDE' WHERE device_id = $1 AND closed_at IS NULL`, [d.id]);
   }
+  return null;
 }
 
 /** Nom d'une balise dans une phrase : son nom choisi entre guillemets, sinon son identifiant. */
@@ -146,7 +167,7 @@ export function beaconSentence(b: Beacon): Statement {
   return { nature: 'MISSING', text: `${who} : le téléphone n’a pas de position pour l’instant (${when}).`, sources: src };
 }
 
-export function beaconFunctions(db: Db) {
+export function beaconFunctions(db: Db, alerts: { emailReady?: boolean } = {}) {
   const dbNow = async () => iso((await db.query<{ now: unknown }>('SELECT now() AS now')).rows[0]!.now);
   const devicesOf = async (orgId: string) => (await db.query<DeviceRow>('SELECT id, org_id, label, animal_id, radius_m, created_at, stopped_at FROM devices WHERE org_id = $1 ORDER BY created_at DESC LIMIT 20', [orgId])).rows;
 
@@ -241,6 +262,13 @@ export function beaconFunctions(db: Db) {
         ? { nature: 'FACT', text: `Incident terminé le ${fmtSec(iso(row.closed_at))} : ${row.close_reason === 'DEVICE_STOPPED' ? 'la balise a été arrêtée' : 'la balise a de nouveau été mesurée dans la zone'}.`, sources: [`INCIDENT:${row.id}`] }
         : { nature: 'COMPUTED', text: 'Incident toujours ouvert : aucune mesure « dans la zone » n’a été reçue depuis.', sources: [`INCIDENT:${row.id}`] },
     ];
+    // E-mail d'alerte : ce que le fournisseur d'envoi a réellement répondu, ou l'absence d'envoi. Jamais « reçu par le destinataire ».
+    const at = row.email_at ? fmtSec(iso(row.email_at)).slice(11) : null;
+    if (row.email_status === 'SENT')
+      statements.push({ nature: 'FACT', text: `Un e-mail d’alerte a été accepté par le service d’envoi (${row.email_provider ?? 'fournisseur'}) à ${at}, pour ${row.email_to_masked ?? 'le destinataire de test'}. Accepté ne veut pas dire lu.`, sources: [`INCIDENT:${row.id}`] });
+    else if (row.email_status === 'FAILED') statements.push({ nature: 'FACT', text: `L’e-mail d’alerte n’est pas parti. ${row.email_error ?? 'L’envoi a échoué.'}`, sources: [`INCIDENT:${row.id}`] });
+    else if (row.email_status === 'SENDING') statements.push({ nature: 'MISSING', text: 'Un e-mail d’alerte est en cours d’envoi : le service d’envoi n’a pas encore répondu.', sources: [`INCIDENT:${row.id}`] });
+    else statements.push({ nature: 'MISSING', text: `Aucun e-mail n’a été envoyé pour cet incident${alerts.emailReady ? '' : ' : l’envoi d’e-mails n’est pas activé sur ce serveur'}.`, sources: [] });
     if (current) {
       const now = beaconSentence(current);
       statements.push({ ...now, text: `État actuel. ${now.text}` });
@@ -248,7 +276,7 @@ export function beaconFunctions(db: Db) {
     const limits = [
       'Une balise mesure sa propre distance à un repère choisi par l’utilisateur. Elle ne mesure ni la position exacte ni l’état de l’animal auquel elle est associée.',
       'La distance est calculée par le téléphone à partir de son GPS et du repère : ce n’est pas une mesure radio de la proximité avec l’ordinateur.',
-      'Dispositif de démonstration : un téléphone tenu à la main. Aucun capteur n’est posé sur un animal. Alerte affichée dans l’application uniquement : aucun message n’est envoyé.',
+      `Dispositif de démonstration : un téléphone tenu à la main. Aucun capteur n’est posé sur un animal. ${alerts.emailReady || row.email_status ? 'Un e-mail d’alerte au plus part par épisode, vers un destinataire de test fixé côté serveur.' : 'Alerte affichée dans l’application uniquement : aucun message n’est envoyé.'}`,
     ];
     if (row.source === 'SIMULATED' || current?.latest?.source === 'SIMULATED') limits.unshift('DONNÉES SIMULÉES : la distance a été réglée à la main, ce n’est pas une mesure.');
     const data: IncidentData = {
@@ -279,6 +307,7 @@ export function beaconFunctions(db: Db) {
         { label: 'Mesure qui a ouvert l’incident', value: `${meters(Number(row.trigger_distance_m))}${row.trigger_accuracy_m ? ` ± ${meters(Number(row.trigger_accuracy_m))}` : ''} · observée ${fmtSec(iso(row.trigger_observed_at))} · reçue ${fmtSec(iso(row.opened_at)).slice(11)} · ${SOURCE_TEXT[row.source]}` },
         { label: 'Distance la plus grande', value: meters(Number(row.max_distance_m)) },
         { label: 'Statut', value: row.closed_at ? `terminé le ${fmtSec(iso(row.closed_at))} (${row.close_reason === 'DEVICE_STOPPED' ? 'balise arrêtée' : 'balise de nouveau dans la zone'})` : 'ouvert' },
+        { label: 'E-mail d’alerte', value: row.email_status === 'SENT' ? `accepté par ${row.email_provider ?? 'le service d’envoi'} à ${row.email_at ? fmtSec(iso(row.email_at)).slice(11) : '?'}, pour ${row.email_to_masked ?? 'le destinataire de test'}` : row.email_status === 'FAILED' ? `non parti : ${row.email_error ?? 'échec'}` : row.email_status === 'SENDING' ? 'en cours d’envoi' : 'aucun envoi' },
       ],
       event: null,
       revisions: [],
@@ -295,7 +324,32 @@ interface Ctx {
   audit: (q: Queryable, u: User | null, action: string, entity: string, id: string, detail?: unknown) => Promise<void>;
 }
 
-export function registerBeacons(ctx: Ctx) {
+/**
+ * Envoie l'e-mail d'alerte d'un incident qui vient de s'ouvrir, et garde ce que le fournisseur a répondu. Appelé une seule fois
+ * par incident ; la clé d'idempotence protège en plus contre un rejeu. Ne bloque pas la réception des mesures.
+ */
+async function notifyIncident(ctx: Ctx, n: AlertNotifier, d: DeviceRow, incidentId: string, reading: { source: BeaconReading['source']; observedAt: string; distanceM: number }, accuracy: number | null) {
+  const { db } = ctx;
+  await db.query(`UPDATE device_incidents SET email_status = 'SENDING', email_provider = $2, email_to_masked = $3 WHERE id = $1`, [incidentId, n.mailer.provider, maskEmail(n.to)]);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 15_000);
+  try {
+    const sent = await n.mailer.send(
+      incidentMail(n, { incidentId, label: d.label && d.label !== DEFAULT_BEACON_LABEL ? d.label : d.id, animalId: d.animal_id, radiusM: d.radius_m, distanceM: reading.distanceM, accuracyM: accuracy, simulated: reading.source === 'SIMULATED', observedAt: fmtSec(reading.observedAt) }),
+      ac.signal,
+    );
+    await db.query(`UPDATE device_incidents SET email_status = 'SENT', email_message_id = $2, email_at = now(), email_error = NULL WHERE id = $1`, [incidentId, sent.id]);
+    await ctx.audit(db, null, 'ALERT_EMAIL_SENT', 'incident', incidentId, { provider: n.mailer.provider });
+  } catch (e) {
+    const message = e instanceof MailError ? e.message : 'L’envoi a échoué.';
+    await db.query(`UPDATE device_incidents SET email_status = 'FAILED', email_at = now(), email_error = $2 WHERE id = $1`, [incidentId, message.slice(0, 300)]);
+    await ctx.audit(db, null, 'ALERT_EMAIL_FAILED', 'incident', incidentId, { provider: n.mailer.provider, code: e instanceof MailError ? e.code : 'ERROR' });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function registerBeacons(ctx: Ctx, notifier: AlertNotifier | null = null) {
   const { db } = ctx;
 
   /** Associe une balise de démonstration à un animal. Le jeton n'est renvoyé qu'une fois ; seul son hachage est stocké. */
@@ -351,7 +405,9 @@ export function registerBeacons(ctx: Ctx) {
     const accuracy = body.source === 'SIMULATED' ? 0 : body.accuracyM;
     const zone = zoneOf(body.distanceM, accuracy, d.radius_m);
     await db.query('INSERT INTO device_readings(device_id, org_id, source, observed_at, distance_m, accuracy_m, zone) VALUES ($1,$2,$3,$4,$5,$6,$7)', [d.id, d.org_id, body.source, body.observedAt, body.distanceM, accuracy, zone]);
-    await trackIncident(db, d, zone, body, accuracy);
+    const opened = await trackIncident(db, d, zone, body, accuracy);
+    // Un nouvel épisode d'éloignement : un e-mail, et un seul, si l'envoi est activé. La mesure n'attend pas la réponse du fournisseur.
+    if (opened && notifier && body.distanceM !== null) void notifyIncident(ctx, notifier, d, opened, { source: body.source, observedAt: body.observedAt, distanceM: body.distanceM }, accuracy).catch(() => {});
     await db.query('DELETE FROM device_readings WHERE device_id = $1 AND id <= COALESCE((SELECT id FROM device_readings WHERE device_id = $1 ORDER BY id DESC OFFSET $2 LIMIT 1), 0)', [d.id, KEEP_READINGS]);
     return reply.status(201).send({ accepted: true, zone, radiusM: d.radius_m });
   });

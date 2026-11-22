@@ -35,6 +35,7 @@ import { registerFarm } from './farm.js';
 import { registerBeacons } from './beacons.js';
 import { type AssistantOptions, registerAssistant } from './assistant.js';
 import { registerLive } from './live.js';
+import { maskEmail, type AlertNotifier } from './notify.js';
 import { type StructuringProvider, type SummaryProvider, registerAssist, structuringFromLlm, summaryFromLlm } from './assist.js';
 import type { LlmClient } from './llm.js';
 
@@ -52,6 +53,8 @@ export interface AppOptions {
   aiLimits?: { timeoutMs?: number; maxCallsPerDay?: number };
   /** Assistant « Parler à mon élevage » : modèle configuré côté serveur (absent = lecture directe, sans IA). */
   assistant?: AssistantOptions;
+  /** E-mail d'alerte d'éloignement : prêt à envoyer (notifier), ou la raison pour laquelle il ne l'est pas. Absent = désactivé. */
+  alertEmail?: { notifier: AlertNotifier | null; reason: string | null };
   /** Version servie (commit Git relevé au démarrage) : permet de savoir, depuis le lien public, quelle version répond. */
   version?: string;
 }
@@ -210,8 +213,9 @@ export async function buildApp(opts: AppOptions) {
   const ctx = { app, db, demoMode: opts.demoMode, currentUser, requireRole, audit: (q: Queryable, u: User | null, a: string, e: string, id: string, d?: unknown) => audit(q, u, a, e, id, d) };
   registerAuth(ctx, opts.auth);
   registerImport(ctx);
-  const farm = registerFarm(ctx);
-  registerBeacons(ctx);
+  const notifier = opts.alertEmail?.notifier ?? null;
+  const farm = registerFarm(ctx, { emailReady: !!notifier });
+  registerBeacons(ctx, notifier);
   const live = registerLive(ctx, farm, opts.assistant?.live ?? null);
   const assistant = registerAssistant(ctx, farm, { ...(opts.assistant ?? { model: null }), liveStatus: live.status });
   const llm = opts.llm ?? null;
@@ -233,6 +237,8 @@ export async function buildApp(opts: AppOptions) {
     startedAt,
     ai: assist.status(),
     assistant: assistant.status(),
+    // E-mail d'alerte : état sans valeur secrète ; le destinataire n'apparaît que masqué.
+    alertEmail: notifier ? { enabled: true, provider: notifier.mailer.provider, to: maskEmail(notifier.to), reason: null } : { enabled: false, provider: null, to: null, reason: opts.alertEmail?.reason ?? 'E-mail d’alerte non activé sur ce serveur.' },
     serverTime: new Date().toISOString(),
   }));
 

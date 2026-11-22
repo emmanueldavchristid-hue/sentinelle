@@ -5,6 +5,7 @@ import { geminiModel } from './gemini.js';
 import { migrate, openDb } from './db.js';
 import { resetAndSeed } from './seed.js';
 import { llmFromConfig } from './llm.js';
+import { checkAlertEmail, resendMailer } from './notify.js';
 
 const db = await openDb({ databaseUrl: config.databaseUrl, dataDir: config.dataDir });
 const applied = await migrate(db);
@@ -23,7 +24,12 @@ const version = (() => {
     return 'inconnue';
   }
 })();
+const alertCheck = checkAlertEmail(config.alertEmail);
 const app = await buildApp({
+  alertEmail: {
+    notifier: alertCheck.ready ? { mailer: resendMailer({ apiKey: config.alertEmail.apiKey, from: config.alertEmail.from }), to: config.alertEmail.to, publicUrl: config.alertEmail.publicUrl } : null,
+    reason: alertCheck.reason,
+  },
   assistant: {
     model: assistantCheck.ready ? geminiModel({ apiKey: config.geminiApiKey, model: config.geminiModel, fallbackModel: config.geminiFallbackModel || undefined, ttsModel: config.geminiTtsModel || undefined, ttsVoice: config.geminiTtsVoice }) : null,
     disabledReason: assistantCheck.ready ? null : (assistantCheck.messages[0] ?? null),
@@ -52,6 +58,7 @@ console.log(`  IA : ${llm ? `activée — ${llm.name}` : 'désactivée (aucun fo
 console.log(`  configuration : ${envFileLoaded ? `fichier ${envFile} chargé` : `aucun fichier .env (${envFile}), valeurs par défaut`}`);
 for (const m of assistantCheck.messages) console.log(`  assistant : ${m}`);
 console.log(`  conversation en direct : ${assistantCheck.ready && config.geminiLiveModel ? `modèle ${config.geminiLiveModel}, ${config.liveMaxSessionSeconds} s au plus` : 'indisponible (GEMINI_LIVE_MODEL non renseigné, ou assistant non configuré)'}`);
+console.log(`  e-mail d’alerte : ${alertCheck.ready ? `activé (Resend), un message par épisode d’éloignement, lien vers ${config.alertEmail.publicUrl}` : `désactivé. ${alertCheck.reason}`}`);
 console.log(`  mode démonstration : ${config.demoMode ? 'activé (sélecteur de rôle, pas d’authentification sécurisée)' : 'désactivé — connexion par identifiant et mot de passe'}`);
 
 const stop = async () => {

@@ -8,11 +8,11 @@ import { beaconName, BEACON_STATUS_LABELS, type Beacon } from '@sentinelle/contr
  * Les points plus pâles sur le même rayon sont ses mesures précédentes : on voit si elle s'éloigne ou revient.
  * Un trait le long du rayon montre la précision annoncée de la dernière mesure.
  */
-const W = 820;
-const H = 430;
-const CX = W / 2;
-const CY = H / 2 + 6;
-const RMAX = 176; // rayon, en unités du dessin, de la distance la plus grande représentée
+const W = 720;
+const H = 500;
+const CX = 318;
+const CY = 252;
+const RMAX = 196; // rayon, en unités du dessin, de la distance la plus grande représentée
 
 export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simulated: boolean; onSource: (ref: string) => void }) {
   const active = beacons.filter((b) => b.status !== 'STOPPED');
@@ -32,12 +32,41 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
         <p className="text-[13.5px] text-[#b9c8c0]">Chaque balise est placée à la distance que son téléphone calcule depuis le repère. La direction n’est pas mesurée.</p>
         {simulated && <p className="mt-1 inline-block bg-[#f2b24a] px-2 py-0.5 text-[13.5px] font-bold text-[#0e2b27]">DONNÉES SIMULÉES</p>}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="relative block h-auto w-full" role="group" aria-label="Schéma de la zone : distance de chaque balise au repère. Les mêmes informations figurent dans la liste des balises.">
+      {/* Petit écran : les mêmes mesures, en liste. */}
+      <ul className="v-zone-list relative sm:hidden">
+        {active.map((b) => {
+          const l = b.latest;
+          return (
+            <li key={b.id} data-out={b.status === 'OUTSIDE' ? 'true' : undefined}>
+              <span className="v-figure">{l?.distanceM != null ? `${Math.round(l.distanceM)} m` : '?'}</span>
+              <span>
+                <b className="block text-[17px]">{beaconName(b)}</b>
+                <span className="block text-[14.5px] text-[#b9c8c0]">
+                  {BEACON_STATUS_LABELS[b.status].toLowerCase()} · seuil {b.radiusM} m
+                  {l ? ` · ${l.source === 'SIMULATED' ? 'distance simulée' : `GPS du téléphone${l.accuracyM ? `, ± ${Math.round(l.accuracyM)} m` : ''}`}` : ''}
+                  {b.silentSeconds !== null && b.silentSeconds >= 8 ? ` · il y a ${b.silentSeconds < 90 ? `${b.silentSeconds} s` : `${Math.round(b.silentSeconds / 60)} min`}` : ''}
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <svg viewBox={`0 0 ${W} ${H}`} className="relative hidden h-auto w-full sm:block" role="group" aria-label="Schéma de la zone : distance de chaque balise au repère. Les mêmes informations figurent dans la liste des balises.">
+        {/* Graduations : la moitié et le double du seuil le plus grand, pour lire une distance d'un coup d'œil. */}
+        {[0.5, 2].map((k) => (
+          <g key={k}>
+            <circle cx={CX} cy={CY} r={scale(radius * k)} fill="none" stroke="#8fa69c" strokeWidth="1" strokeDasharray="1 7" opacity="0.75" />
+            {/* L'échelle se lit en haut, à la verticale du repère : aucun rayon de balise ne passe par là. */}
+            <text x={CX} y={CY - scale(radius * k) - 7} textAnchor="middle" fontSize="13.5" className="v-halo v-sky-sub">
+              {Math.round(radius * k)} m
+            </text>
+          </g>
+        ))}
         {/* Seuil(s) de la zone */}
         {rings.map((r) => (
           <g key={r}>
             <circle cx={CX} cy={CY} r={scale(r)} fill="rgb(243 239 226 / 0.05)" stroke="#f3efe2" strokeWidth="1.6" strokeDasharray="6 6" />
-            <text x={CX} y={CY - scale(r) - 8} textAnchor="middle" fontSize="15" className="v-halo v-sky-sub">
+            <text x={CX} y={CY - scale(r) - 8} textAnchor="middle" fontSize="15.5" fontWeight="650" className="v-halo">
               seuil {r} m
             </text>
           </g>
@@ -101,12 +130,30 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
               {/* D'où vient la mesure, sa précision, et son ancienneté si la balise ne transmet plus. */}
               <text x={tx} y={p.y + 34} textAnchor={side} fontSize="13.5" className="v-halo v-sky-sub">
                 {l.source === 'SIMULATED' ? 'distance simulée' : `GPS du téléphone${acc > 0 ? `, ± ${Math.round(acc)} m` : ''}`}
-                {stale && b.silentSeconds !== null ? ` · dernière mesure il y a ${b.silentSeconds < 90 ? `${b.silentSeconds} s` : `${Math.round(b.silentSeconds / 60)} min`}` : ''}
+                {b.silentSeconds !== null && (stale || b.silentSeconds >= 8) ? ` · ${stale ? 'dernière mesure ' : ''}il y a ${b.silentSeconds < 90 ? `${b.silentSeconds} s` : `${Math.round(b.silentSeconds / 60)} min`}` : ''}
               </text>
             </g>
           );
         })}
       </svg>
+      {/* Légende : ce que chaque signe veut dire, sans avoir à ouvrir une preuve. */}
+      <ul className="relative hidden flex-wrap gap-x-5 gap-y-1 px-5 pb-4 text-[13.5px] text-[#b9c8c0] sm:flex">
+        <li>
+          <span aria-hidden="true">■</span> repère fixé depuis le téléphone
+        </li>
+        <li>
+          <span aria-hidden="true">┄</span> seuil de la zone
+        </li>
+        <li>
+          <span aria-hidden="true">●</span> dernière mesure, <span aria-hidden="true">•</span> mesures précédentes
+        </li>
+        <li>
+          <span aria-hidden="true">▬</span> précision annoncée
+        </li>
+        <li className="text-[#f2b24a]">
+          <span aria-hidden="true">●</span> hors de la zone
+        </li>
+      </ul>
     </section>
   );
 }

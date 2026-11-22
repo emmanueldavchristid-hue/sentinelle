@@ -376,7 +376,7 @@ function extractNote(text: string, animalIds: string[]): string {
 
 // ---------- Fonctions (appelées par les routes ET par l'assistant) ----------
 
-export function farmTools(db: Db) {
+export function farmTools(db: Db, opts: { emailReady?: boolean } = {}) {
   const envelope = <T>(tool: FarmToolName, params: Record<string, unknown>, asOf: string, period: ToolResult['period'], statements: Statement[], data: T, sources: SourceRef[], limits: string[]): ToolResult<T> => ({
     tool,
     params,
@@ -387,7 +387,7 @@ export function farmTools(db: Db) {
     sources: uniqueSources(sources),
     limits,
   });
-  const beacons = beaconFunctions(db);
+  const beacons = beaconFunctions(db, { emailReady: opts.emailReady });
   const NO_SENSOR = 'Aucun capteur n’est connecté : seuls les enregistrements saisis ou importés sont pris en compte.';
 
   async function resetDate(orgId: string): Promise<string | null> {
@@ -800,8 +800,8 @@ interface Ctx {
 }
 
 /** Routes de l'exploitation : les écrans appellent directement les mêmes fonctions que l'assistant. */
-export function registerFarm(ctx: Ctx): FarmTools {
-  const tools = farmTools(ctx.db);
+export function registerFarm(ctx: Ctx, opts: { emailReady?: boolean } = {}): FarmTools {
+  const tools = farmTools(ctx.db, opts);
   ctx.app.get('/api/farm/situation', async (req) => tools.situation(await ctx.currentUser(req)));
   ctx.app.get('/api/farm/changes', async (req) => tools.changes(await ctx.currentUser(req), req.query ?? {}));
   ctx.app.get('/api/farm/animals', async (req) => tools.findAnimal(await ctx.currentUser(req), { query: (req.query as { q?: string } | undefined)?.q ?? '' }));
