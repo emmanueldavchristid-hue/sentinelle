@@ -27,6 +27,7 @@ const version = (() => {
 const alertCheck = checkAlertEmail(config.alertEmail);
 const app = await buildApp({
   baoule: config.baoule.enabled ? { url: config.baoule.url, examplesFile: config.baoule.examplesFile } : null,
+  beaconReadCacheMs: config.beaconReadCacheMs,
   alertEmail: {
     notifier: alertCheck.ready ? { mailer: resendMailer({ apiKey: config.alertEmail.apiKey, from: config.alertEmail.from }), to: config.alertEmail.to, publicUrl: config.alertEmail.publicUrl } : null,
     reason: alertCheck.reason,

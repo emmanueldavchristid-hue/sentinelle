@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bearingOf, type AssistantReply, type Beacon, type BeaconsData, type IncidentData, type SituationData, type SourceData, type ToolResult } from '@sentinelle/contracts';
 import { buildApp } from '../src/app.js';
 import { recognize } from '../src/assistant.js';
-import { AUTO_MAX_ACTIVE, offsetFromAnchor, zoneOf } from '../src/beacons.js';
+import { AUTO_MAX_ACTIVE, offsetFromAnchor, shareBeaconReads, zoneOf } from '../src/beacons.js';
 import { type Db, migrate } from '../src/db.js';
 import { resetAndSeed } from '../src/seed.js';
 import { openTestDb } from './helpers.js';
@@ -507,7 +507,7 @@ describe('Suivi automatique : ouvrir le lien suffit, repère commun, distance ca
     expect(seen.length).toBeGreaterThan(12);
     for (const body of seen) {
       expect(body).not.toMatch(/latitude|longitude|"lat"|"lon"|"lng"|coord/i);
-      expect(body).not.toMatch(/5\.36\d|4\.008\d/);
+      expect(body).not.toMatch(/5\.36\d{3}|4\.008\d{2}/);
     }
     // En base : les mesures, les balises, les incidents et le journal ne portent que des mètres ; seul le repère a une position.
     const cols = async (table: string) => (await db.query<{ column_name: string }>('SELECT column_name FROM information_schema.columns WHERE table_name = $1', [table])).rows.map((c) => c.column_name);
@@ -516,7 +516,7 @@ describe('Suivi automatique : ouvrir le lien suffit, repère commun, distance ca
     const journal = JSON.stringify((await db.query('SELECT action, entity, entity_id, detail FROM audit_events')).rows);
     expect(journal).toMatch(/DEVICE_AUTO_REGISTERED/);
     expect(journal).toMatch(/ANCHOR_SET/);
-    expect(journal).not.toMatch(/5\.36\d|4\.008\d|latitude/);
+    expect(journal).not.toMatch(/5\.36\d{3}|4\.008\d{2}|latitude/);
   });
 
   it('déplacement du repère sur un appareil : réservé à une session, anciennes mesures effacées, incident terminé pour ce motif, distances recalculées', async () => {
@@ -529,7 +529,7 @@ describe('Suivi automatique : ouvrir le lien suffit, repère commun, distance ca
     const r = keep(await anchorOn(b.id));
     expect(r.statusCode).toBe(200);
     expect(r.json()).toMatchObject({ ok: true, anchor: { byDeviceId: b.id, byLabel: 'Ordinateur 3', how: 'MOVED', accuracyM: 5 } });
-    expect(r.body).not.toMatch(/latitude|longitude|5\.36\d|4\.008\d/);
+    expect(r.body).not.toMatch(/latitude|longitude|5\.36\d{3}|4\.008\d{2}/);
     // Les points calculés par rapport à l'ancien repère sont effacés : aucun n'est plus rendu, ni en dernière mesure, ni en trajectoire.
     const seq = Number((await db.query<{ seq: number }>('SELECT seq FROM org_anchors')).rows[0]!.seq);
     expect(seq).toBe(2);
@@ -628,5 +628,31 @@ describe('Suivi automatique : ouvrir le lien suffit, repère commun, distance ca
     const l = await list();
     expect(l.data.anchor).toMatchObject({ byDeviceId: again.id, how: 'FIRST_POSITION' });
     expect(l.data.beacons[0]!.latest).toMatchObject({ distanceM: 0 });
+  });
+  it('lecture partagée : pendant sa durée, tous les écrans reçoivent la même lecture, datée de son instant réel ; une action de l’éleveur l’efface', async () => {
+    const shared = await buildApp({ db, demoMode: true, beaconReadCacheMs: 400 });
+    const read = async () => (await shared.inject({ url: '/api/farm/devices', headers: FARMER })).json() as ToolResult<BeaconsData>;
+    const d = (await shared.inject({ method: 'POST', url: '/api/devices/auto', payload: { kind: 'PHONE' } })).json() as { id: string; token: string };
+    const move = (northM: number) => shared.inject({ method: 'POST', url: `/api/devices/${d.id}/position`, headers: { 'x-device-token': d.token }, payload: { accuracyM: 5, observedAt: new Date().toISOString(), ...at(500 + northM, 500) } });
+    expect((await move(0)).statusCode).toBe(201);
+    const first = await read();
+    await new Promise((r) => setTimeout(r, 950)); // le serveur accepte une position par seconde et par appareil
+    expect((await move(60)).statusCode).toBe(201);
+    // Dans la durée de partage : la même lecture, qui dit toujours à quel instant elle a été faite.
+    const second = await read();
+    expect(second.asOf).not.toBe(first.asOf); // la première a expiré pendant l'attente : nouvelle lecture
+    const third = await read();
+    expect(third.asOf).toBe(second.asOf);
+    expect(third.data.beacons.find((x) => x.id === d.id)!.latest!.distanceM).toBeCloseTo(60, 0);
+    // Une action de l'éleveur efface la lecture partagée : il voit son effet tout de suite.
+    expect((await shared.inject({ method: 'POST', url: `/api/farm/devices/${d.id}/stop`, headers: FARMER })).statusCode).toBe(200);
+    const after = await read();
+    expect(after.asOf).not.toBe(third.asOf);
+    expect(after.data.beacons.find((x) => x.id === d.id)!.status).toBe('STOPPED');
+    // Passée la durée, la lecture est refaite.
+    await new Promise((r) => setTimeout(r, 450));
+    expect((await read()).asOf).not.toBe(after.asOf);
+    await shared.close();
+    shareBeaconReads(db, 0); // la base est partagée avec les autres tests : chacun relit de nouveau
   });
 });

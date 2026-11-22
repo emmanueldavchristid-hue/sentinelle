@@ -32,7 +32,7 @@ import { findReplay, lock, requestHash, saveReplay } from './idempotency.js';
 import { type AuthConfig, registerAuth, sessionUser } from './auth.js';
 import { registerImport } from './import.js';
 import { registerFarm } from './farm.js';
-import { registerBeacons } from './beacons.js';
+import { registerBeacons, shareBeaconReads } from './beacons.js';
 import { type AssistantOptions, registerAssistant } from './assistant.js';
 import { registerLive } from './live.js';
 import { registerBaoule, type BaouleOptions } from './baoule.js';
@@ -58,6 +58,8 @@ export interface AppOptions {
   alertEmail?: { notifier: AlertNotifier | null; reason: string | null };
   /** Voix en baoulé par un service local de parole ; absente ou null = non proposée. */
   baoule?: BaouleOptions | null;
+  /** Durée (ms) pendant laquelle une lecture des balises est partagée entre tous les écrans d'une organisation. 0 ou absent : chaque demande relit. */
+  beaconReadCacheMs?: number;
   /** Version servie (commit Git relevé au démarrage) : permet de savoir, depuis le lien public, quelle version répond. */
   version?: string;
 }
@@ -219,6 +221,7 @@ export async function buildApp(opts: AppOptions) {
   registerImport(ctx);
   const notifier = opts.alertEmail?.notifier ?? null;
   const farm = registerFarm(ctx, { emailReady: !!notifier });
+  shareBeaconReads(db, opts.beaconReadCacheMs ?? 0);
   registerBeacons(ctx, notifier);
   const live = registerLive(ctx, farm, opts.assistant?.live ?? null);
   const baoule = registerBaoule(ctx, farm, opts.baoule ?? null);

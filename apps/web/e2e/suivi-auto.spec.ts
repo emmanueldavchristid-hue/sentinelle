@@ -23,7 +23,8 @@ test('suivi automatique : ouvrir le lien suffit, repère commun, déplacement su
   await expect(page.getByRole('region', { name: 'Suivi de cet appareil' }).getByRole('button', { name: 'Arrêter le suivi' })).toHaveCount(0);
 
   // Un « téléphone » (375 px, navigateur mobile) ouvre la page d'accueil. Aucune action : ni association, ni QR, ni bouton.
-  const home = { latitude: 5.36, longitude: -4.0083, accuracy: 5 };
+  // Décimales reconnaissables : on vérifie plus bas qu'elles ne ressortent d'aucune réponse du serveur.
+  const home = { latitude: 5.36123, longitude: -4.00831, accuracy: 5 };
   const phoneCtx = await browser.newContext({ userAgent: devices['Pixel 7'].userAgent, isMobile: true, hasTouch: true, viewport: { width: 375, height: 800 }, permissions: ['geolocation'], geolocation: home });
   const phone = await phoneCtx.newPage();
   await phone.goto('/');
@@ -100,7 +101,8 @@ test('suivi automatique : ouvrir le lien suffit, repère commun, déplacement su
   for (const m of [22, 56, 78]) expect(track.some((t) => Math.abs(t.northM - m) < 1.5)).toBe(true);
   expect(beacons.find((b) => b.label === 'Ordinateur 2')!.latest.source).toBe('BROWSER_POSITION');
   // Aucune coordonnée ne revient du serveur : seulement des mètres par rapport au repère.
-  expect(body).not.toMatch(/latitude|longitude|5\.36\d|4\.008\d/);
+  // Cinq chiffres attendus après la virgule : une heure (« …05.361Z ») ou une distance ne peuvent pas y ressembler par hasard.
+  expect(body).not.toMatch(/latitude|longitude|5\.36\d{3}|4\.008\d{2}/);
   await map.scrollIntoViewIfNeeded();
   await map.screenshot({ path: 'test-results/suivi-auto-carte.png' });
   await page.screenshot({ path: 'test-results/suivi-auto-eleveur.png', fullPage: true });

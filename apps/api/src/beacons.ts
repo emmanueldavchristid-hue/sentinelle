@@ -299,6 +299,20 @@ export function beaconSentence(b: Beacon): Statement {
   return { nature: 'MISSING', text: `${who} : le téléphone n’a pas de position pour l’instant (${when}).`, sources: src };
 }
 
+/**
+ * Lecture partagée des balises. Chaque appareil qui ouvre le lien affiche l'écran de l'éleveur et relit les balises toutes
+ * les 2 secondes : à vingt téléphones, cela fait dix lectures complètes par seconde sur l'ordinateur de démonstration.
+ * Pendant `ms` millisecondes, tous ceux d'une même organisation reçoivent donc LA MÊME lecture, avec son instant réel
+ * (`asOf`) : ce n'est pas un faux temps réel, seulement une lecture faite une fois au lieu de vingt. Désactivée (0) par
+ * défaut et dans les tests ; le serveur l'active (BEACONS_READ_CACHE_MS, 1000 par défaut). Une action de l'éleveur
+ * (associer, arrêter, déplacer le repère) l'efface aussitôt, pour qu'il voie son effet sans attendre.
+ */
+const sharedReads = new WeakMap<Db, { ms: number; byOrg: Map<string, { at: number; value: Promise<ToolResult<BeaconsData>> }> }>();
+export function shareBeaconReads(db: Db, ms: number) {
+  sharedReads.set(db, { ms: Math.max(0, Math.min(5000, Math.floor(ms) || 0)), byOrg: new Map() });
+}
+const forgetSharedRead = (db: Db, orgId: string) => void sharedReads.get(db)?.byOrg.delete(orgId);
+
 export function beaconFunctions(db: Db, alerts: { emailReady?: boolean } = {}) {
   const raw = rawOf(db);
   const dbNow = async () => iso((await db.query<{ now: unknown }>('SELECT now() AS now')).rows[0]!.now);
@@ -310,6 +324,17 @@ export function beaconFunctions(db: Db, alerts: { emailReady?: boolean } = {}) {
 
   /** Lecture des balises de l'exploitation : même enveloppe que les autres fonctions (sources, dates, limites). */
   async function read(u: User): Promise<ToolResult<BeaconsData>> {
+    const shared = sharedReads.get(db);
+    if (!shared?.ms) return readNow(u);
+    const hit = shared.byOrg.get(u.org_id);
+    if (hit && Date.now() - hit.at < shared.ms) return hit.value;
+    const value = readNow(u);
+    shared.byOrg.set(u.org_id, { at: Date.now(), value });
+    // Une lecture qui échoue n'est pas gardée : la suivante réessaie.
+    value.catch(() => shared.byOrg.get(u.org_id)?.value === value && shared.byOrg.delete(u.org_id));
+    return value;
+  }
+  async function readNow(u: User): Promise<ToolResult<BeaconsData>> {
     const asOf = await dbNow();
     const anchor = await anchorRow(db, u.org_id);
     const beacons: Beacon[] = [];
@@ -557,6 +582,7 @@ export function registerBeacons(ctx: Ctx, notifier: AlertNotifier | null = null)
     const token = randomBytes(24).toString('base64url');
     await db.query('INSERT INTO devices(id, org_id, label, animal_id, token_hash, radius_m, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, u.org_id, body.label ?? DEFAULT_BEACON_LABEL, animal?.id ?? null, sha256(token), body.radiusM, u.id]);
     await ctx.audit(db, u, 'DEVICE_PAIRED', 'device', id, { animalId: animal?.id ?? null, radiusM: body.radiusM });
+    forgetSharedRead(db, u.org_id);
     return reply.status(201).send({ id, token, label: body.label ?? DEFAULT_BEACON_LABEL, animalId: animal?.id ?? null, radiusM: body.radiusM });
   });
 
@@ -574,6 +600,7 @@ export function registerBeacons(ctx: Ctx, notifier: AlertNotifier | null = null)
     const id = (req.params as { id: string }).id;
     if (!(await stopDevice(id, u.org_id))) throw new HttpError(404, 'NOT_FOUND', 'Balise introuvable ou déjà arrêtée');
     await ctx.audit(db, u, 'DEVICE_STOPPED', 'device', id);
+    forgetSharedRead(db, u.org_id);
     return { ok: true };
   });
 
@@ -633,6 +660,7 @@ export function registerBeacons(ctx: Ctx, notifier: AlertNotifier | null = null)
       return a;
     });
     await ctx.audit(db, u, 'ANCHOR_MOVED', 'device', id);
+    forgetSharedRead(db, u.org_id);
     return { ok: true, anchor: anchorInfo(anchor) };
   });
 
