@@ -5,7 +5,7 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 ## Dernier point de contrôle
 - Date : 2026-11-22, vers 03 h 15 (Africa/Abidjan), session Claude Code sur le PC Windows de Yvan.
 - Branche : `sentinelle-vivant` (créée depuis `feat/sentinelle-demo`, qui garde la version du 20/11 avec ses correctifs commités : `da53611`).
-- Rien n'est poussé vers GitHub. Aucune fusion.
+- Branche `sentinelle-vivant` poussée vers GitHub le 22/11 à la demande de Yvan (nouvelle branche distante, jusqu'au commit `186ce36`, sans forcer). Le dépôt est public. La branche par défaut `feat/sentinelle-demo` n'a pas été touchée ; les étiquettes locales ne sont pas poussées. Aucune fusion, aucune demande de fusion ouverte.
 - **Version servie** : lisible dans `GET /api/health` (`version` = commit relevé au démarrage, `startedAt`). Le lien public est un tunnel Cloudflare temporaire, sans contrôle d'accès.
 - **Version de secours** : étiquette Git `stable-2026-11-21` (commit `c20f2ec`, voix par tours, sans conversation en direct), installée et compilée dans le dossier voisin `sentinelle-secours`. Lancement : `lancer-secours.bat` (dossier parent), après avoir fermé l'autre serveur. Démarrage vérifié le 22/11 sur un autre port, base en mémoire.
 - Sauvegardes locales (hors Git, sans `.env`) : `data/sauvegardes/live-en-cours-2026-11-22.tar.gz` (fichiers du chantier avant commit).
