@@ -10,3 +10,5 @@ test-results/
 data/
 # Sauvegardes locales de la base (pnpm db:backup)
 backups/
+# Copies de travail temporaires des agents
+.claude/worktrees/
