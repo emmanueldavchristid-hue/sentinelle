@@ -7,6 +7,7 @@ import { go, useApp } from '../state';
 import { BeaconAlert, BeaconsPanel } from '../farm/Beacons';
 import { Constellation } from '../farm/Constellation';
 import { Zone } from '../farm/Zone';
+import { BaouleTalk } from '../farm/Baoule';
 import { LiveTalk, type LiveHandle } from '../farm/Live';
 import { canSpeak, Dictation, playSpeech, stopSpeech, voiceRepliesPref, type MicPhase, type VoiceVia } from '../farm/Voice';
 import { DraftCard, describeDraft, EvidenceDialog, fmtInstant, fmtState, PlainAnswer, plainSentence, ResultView, SimpleDraft, SourceChip, Timeline, type DraftValues } from '../farm/parts';
@@ -1016,6 +1017,32 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
               </button>
               {liveBroken && <span className="text-[14px] text-danger">{liveBroken} Le bouton ci-dessous dicte une phrase à la fois.</span>}
             </p>
+          )}
+          {assistant?.voice?.baoule && (assistant.voice.baoule.available || (detailed && assistant.voice.baoule.enabled)) && (
+            <BaouleTalk
+              session={session}
+              status={assistant.voice.baoule}
+              offline={offline}
+              detailed={detailed}
+              maxSeconds={Math.min(20, assistant.voice.maxSeconds ?? 20)}
+              onStart={() => stopSpeech()}
+              onReply={(r) =>
+                conversation.add({
+                  id: crypto.randomUUID(),
+                  question: `Note vocale en baoulé (transcription automatique) : « ${r.heard || 'rien d’audible'} »`,
+                  askedAt: new Date().toISOString(),
+                  pending: false,
+                  error: null,
+                  offline: false,
+                  reply: r.reply,
+                  key: null,
+                  update: null,
+                  compared: null,
+                  draft: null,
+                  receipt: null,
+                })
+              }
+            />
           )}
           {!liveMode && (canDictate || detailed) && (
             <div className="mt-4">

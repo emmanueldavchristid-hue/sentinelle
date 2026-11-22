@@ -1,0 +1,9 @@
+# Service local de parole en baoulé (tools/baoule/serveur.py). Python 3.12, processeur seul.
+# Versions essayées le 22/11/2026 ; le code des trois derniers paquets a été lu avant installation.
+torch
+transformers
+soundfile
+huggingface_hub
+africa-tts==0.5.2
+africa-g2p==0.3.5
+pocket-tts==4.0.1

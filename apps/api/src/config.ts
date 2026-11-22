@@ -65,6 +65,15 @@ export const config = {
    * E-mail d'alerte d'éloignement : désactivé par défaut. Il faut ALERT_EMAIL=on, la clé du fournisseur, le destinataire de test
    * (une seule adresse, fixée ici et nulle part ailleurs) et l'adresse publique de l'application pour le lien du message.
    */
+  /**
+   * Voix en baoulé : désactivée par défaut. BAOULE_VOICE=on suppose que le service local de parole est lancé
+   * (tools/baoule/serveur.py, modèles ouverts téléchargés dans data/baoule : voir docs/BAOULE.md).
+   */
+  baoule: {
+    enabled: (process.env.BAOULE_VOICE ?? '').trim().toLowerCase() === 'on',
+    url: (process.env.BAOULE_URL ?? '').trim().replace(/\/+$/, '') || 'http://127.0.0.1:8765',
+    examplesFile: resolve(root, 'data/baoule/exemples.json'),
+  },
   alertEmail: {
     enabled: (process.env.ALERT_EMAIL ?? '').trim().toLowerCase() === 'on',
     provider: (process.env.ALERT_EMAIL_PROVIDER ?? '').trim().toLowerCase() || 'resend',

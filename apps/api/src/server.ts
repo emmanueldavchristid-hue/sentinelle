@@ -26,6 +26,7 @@ const version = (() => {
 })();
 const alertCheck = checkAlertEmail(config.alertEmail);
 const app = await buildApp({
+  baoule: config.baoule.enabled ? { url: config.baoule.url, examplesFile: config.baoule.examplesFile } : null,
   alertEmail: {
     notifier: alertCheck.ready ? { mailer: resendMailer({ apiKey: config.alertEmail.apiKey, from: config.alertEmail.from }), to: config.alertEmail.to, publicUrl: config.alertEmail.publicUrl } : null,
     reason: alertCheck.reason,
@@ -58,6 +59,7 @@ console.log(`  IA : ${llm ? `activée — ${llm.name}` : 'désactivée (aucun fo
 console.log(`  configuration : ${envFileLoaded ? `fichier ${envFile} chargé` : `aucun fichier .env (${envFile}), valeurs par défaut`}`);
 for (const m of assistantCheck.messages) console.log(`  assistant : ${m}`);
 console.log(`  conversation en direct : ${assistantCheck.ready && config.geminiLiveModel ? `modèle ${config.geminiLiveModel}, ${config.liveMaxSessionSeconds} s au plus` : 'indisponible (GEMINI_LIVE_MODEL non renseigné, ou assistant non configuré)'}`);
+console.log(`  voix en baoulé : ${config.baoule.enabled ? `activée, service local de parole attendu sur ${config.baoule.url} (tools/baoule/serveur.py)` : 'désactivée (BAOULE_VOICE=on pour l’activer)'}`);
 console.log(`  e-mail d’alerte : ${alertCheck.ready ? `activé (Resend), un message par épisode d’éloignement, lien vers ${config.alertEmail.publicUrl}` : `désactivé. ${alertCheck.reason}`}`);
 console.log(`  mode démonstration : ${config.demoMode ? 'activé (sélecteur de rôle, pas d’authentification sécurisée)' : 'désactivé — connexion par identifiant et mot de passe'}`);
 

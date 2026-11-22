@@ -303,6 +303,8 @@ export interface AssistantStatus {
     speech?: boolean;
     /** Conversation en direct : le modèle écoute et répond à la voix, sans étape de transcription. */
     live?: { available: boolean; model: string | null; maxSeconds: number; idleSeconds: number };
+    /** Note vocale en baoulé, par des modèles ouverts exécutés sur le serveur (aucun service en ligne ne sait le baoulé). */
+    baoule?: BaouleStatus;
   };
 }
 
@@ -404,6 +406,39 @@ export interface ObservationAssistReply {
   reply: string;
   /** La phrase nomme un autre animal que celui du formulaire : rien n'est changé pour l'animal, et c'est dit. */
   otherAnimal: string | null;
+}
+
+/** État de la voix en baoulé sur ce serveur. `validated` : les phrases dites ont-elles été validées par un locuteur ? */
+export interface BaouleStatus {
+  /** La voix en baoulé est-elle activée sur ce serveur (BAOULE_VOICE=on) ? Activée ne veut pas dire disponible : le service local de parole doit répondre. */
+  enabled: boolean;
+  available: boolean;
+  reason: string | null;
+  validated: boolean;
+  /** Nombre de formulations enregistrées par un locuteur, qui servent de points de comparaison. */
+  examples: number;
+}
+export type BaouleIntent = 'situation' | 'changes' | 'missing' | 'beacons';
+/**
+ * Réponse à une note vocale en baoulé. Les faits sont dans `reply` (lecture des données, en français, avec ses preuves) ;
+ * `spoken` est le texte baoulé dit à voix haute, composé de gabarits fixes et de nombres écrits par règle ; `spokenFr` en donne
+ * le sens en français. `heard` est une transcription automatique, à ne pas prendre pour les mots exacts de la personne.
+ */
+export interface BaouleReply {
+  heard: string;
+  intent: BaouleIntent | 'unknown';
+  /** Ressemblance avec la question retenue, de 0 à 1. */
+  score: number;
+  /** Question française à laquelle la note vocale a été rapprochée ; null si elle n'a pas été reconnue. */
+  question: string | null;
+  reply: AssistantReply;
+  spoken: string;
+  spokenFr: string;
+  /** Réponse dite en baoulé (WAV, base64) ; null si la voix a échoué : rien n'a alors été dit. */
+  audio: string | null;
+  validated: boolean;
+  listenMs: number;
+  speakMs: number;
 }
 
 /** Résultat d'une dictée : le texte transcrit, à vérifier par l'utilisateur avant envoi. L'audio n'est pas conservé. */
