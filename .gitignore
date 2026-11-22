@@ -12,3 +12,4 @@ data/
 backups/
 # Copies de travail temporaires des agents
 .claude/worktrees/
+__pycache__/

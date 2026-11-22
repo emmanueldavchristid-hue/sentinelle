@@ -20,6 +20,7 @@ Réglages :
   BAOULE_PORT (8765), BAOULE_STT_DIR (data/baoule/stt), BAOULE_STT_CT2_DIR (data/baoule/stt-ct2), BAOULE_TTS_DIR (data/baoule/tts),
   BAOULE_CACHE_DIR (data/baoule/cache-voix ; « off » = mémoire seulement),
   BAOULE_STT_ENGINE (auto | rapide | origine), BAOULE_STT_LANG (langue imposée au moteur rapide ; vide = celle du modèle),
+  BAOULE_STT_COMPUTE (int8 ; float32 = sans arrondi des poids, plus lent, à préférer si le moteur rapide transcrit moins bien),
   BAOULE_BEAM (1), BAOULE_THREADS (0 = choix du moteur), BAOULE_TRIM (on | off).
 """
 
@@ -47,6 +48,7 @@ TTS_DIR = os.environ.get('BAOULE_TTS_DIR', 'data/baoule/tts')
 CACHE_DIR = os.environ.get('BAOULE_CACHE_DIR', 'data/baoule/cache-voix')
 STT_ENGINE = os.environ.get('BAOULE_STT_ENGINE', 'auto').strip().lower()
 STT_LANG = os.environ.get('BAOULE_STT_LANG', '').strip().lower()
+STT_COMPUTE = os.environ.get('BAOULE_STT_COMPUTE', 'int8').strip().lower() or 'int8'
 BEAM = max(1, min(8, int(os.environ.get('BAOULE_BEAM', '1') or 1)))
 THREADS = max(0, int(os.environ.get('BAOULE_THREADS', '0') or 0))
 TRIM = os.environ.get('BAOULE_TRIM', 'on').strip().lower() != 'off'
@@ -106,7 +108,7 @@ def token_cap(samples: np.ndarray) -> int:
 def load_fast() -> Callable[[np.ndarray], str]:
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(STT_CT2_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS, local_files_only=True)
+    model = WhisperModel(STT_CT2_DIR, device='cpu', compute_type=STT_COMPUTE, cpu_threads=THREADS, local_files_only=True)
     lang = STT_LANG or model_language(STT_DIR)
     info['lang'] = lang or 'devinée par le moteur'
 
@@ -160,7 +162,7 @@ def load_stt() -> None:
     if want_fast and os.path.isdir(STT_CT2_DIR):
         try:
             stt = load_fast()
-            info['engine'] = 'rapide (CTranslate2, entiers 8 bits)'
+            info['engine'] = f'rapide (CTranslate2, {STT_COMPUTE})'
         except Exception as e:  # noqa: BLE001 : le moteur d'origine prend le relais, et /health dit pourquoi
             errors['stt-rapide'] = f'{type(e).__name__}: {e}'[:300]
     elif STT_ENGINE in ('rapide', 'ct2'):
