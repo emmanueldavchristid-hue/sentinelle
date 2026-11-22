@@ -36,6 +36,8 @@ Variante « incident » (après un essai réel avec le téléphone) : quand la b
 
 Variante vocale (IA activée, micro autorisé dans le navigateur) : à 1:20, cliquer **Dicter**, dire « Ajoute une observation sur B zéro dix-sept : elle mange moins depuis ce matin », cliquer **Arrêter et transcrire**, relire le texte, puis **Demander**. À n'utiliser en public qu'après un essai concluant avec le micro de la salle.
 
+Variante « baoulé » (service local de parole lancé, `BAOULE_VOICE=on` ; à ne montrer qu'après l'essai de `docs/ESSAIS.md`) : dans « Parler en baoulé », toucher **Mon élevage** : la réponse est dite en baoulé et les faits s'affichent en français. Puis, si l'essai avec une vraie voix a été concluant, toucher **Parler en baoulé** et poser l'une des quatre questions. À dire : aucun service du marché ne sait le baoulé, nous l'avons essayé ; ce sont deux modèles ouverts qui tournent sur cet ordinateur, l'un écoute, l'autre parle ; le chiffre dit est écrit par une règle à partir des données, jamais inventé ; quatre questions seulement, et les phrases restent à valider par des locuteurs. Ne pas annoncer « l'application comprend le baoulé » : elle reconnaît quatre questions.
+
 Variante « balise » (à n'utiliser qu'après un essai réel avec le téléphone prévu) : ouvrir l'application par le lien https, « Associer une balise » sur un animal (par exemple B-071), scanner le QR code avec le téléphone. Sur le téléphone : « Distance simulée » pour une salle (bandeau « données simulées » visible), ou « Autoriser la position » puis « Fixer le repère ici » si l'on peut s'éloigner dehors. Quand la distance dépasse le seuil, l'alerte apparaît sur l'écran de l'éleveur ; demander alors « Quel animal s'est éloigné ? » (au micro : la réponse est lue à voix haute). À dire : c'est un téléphone qui joue le rôle d'un capteur, la balise mesure sa propre distance, aucun capteur n'est posé sur un animal.
 
 Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier ? », « Montre-moi B-017 », « Quelles informations manquent ? », « Ajoute une observation sur B-017 : … », « Pourquoi ta réponse a changé ? », « Quelle est la situation de mon élevage ? ». Avec l'IA, les formulations libres fonctionnent aussi.
@@ -75,4 +77,6 @@ Toujours disponible par « Changer de rôle ». Résumé : agent de terrain → 
 L'autorisation du développement avant le sprint n'est **pas confirmée** (D-01, D-09). Ont été produits avant ou pendant l'événement, à partir du 15/11/2026 :
 - cadrage et documentation (`docs/`), maquette statique ;
 - moteur, API, interface web, tests (historique Git des branches `feat/sentinelle-demo` et `sentinelle-vivant`) ;
-- outils d'IA utilisés pour le développement (assistant de code) et, dans le produit, l'API Gemini de Google.
+- outils d'IA utilisés pour le développement (assistant de code) et, dans le produit, l'API Gemini de Google ;
+- pour la voix en baoulé : deux modèles ouverts exécutés sur l'ordinateur, `abdouaziiz/baoule_stt_2` (Apache 2.0) et `AfriSpeech/africa-tts` (CC-BY-NC, usage non commercial) ;
+- le 22/11, une partie du travail (branche `claude/baoule-balise-improvements-wwf2je`) a été faite par l'assistant de code dans une session en ligne, sans le PC.

@@ -1,7 +1,7 @@
 # Sentinelle — instructions du dépôt
 
 > **Direction en cours (21/11) : SENTINELLE VIVANT.** Lire `docs/BRIEF_SENTINELLE_VIVANT.md` (règles non négociables) et `docs/STATUS.md`.
-> L'éleveur est le premier utilisateur ; l'application s'ouvre sur « Mon élevage aujourd'hui ». Branche de travail : `sentinelle-vivant`.
+> L'éleveur est le premier utilisateur ; l'application s'ouvre sur « Mon élevage aujourd'hui ». Branche de travail : voir « Règles Git ».
 
 Démonstrateur de hackathon (SELAB 2026, Abidjan, 20–22/11) : relier un signalement
 sanitaire bovin aux mouvements enregistrés, avec preuves, données manquantes et
@@ -25,7 +25,7 @@ sous-tâche significative ou test décisif, avant une opération longue, en fin 
 Ne pas compter sur une sauvegarde de dernière seconde. Commits aux étapes cohérentes et vérifiées.
 
 ## Règles Git
-- Branche de travail : `sentinelle-vivant` (la branche `feat/sentinelle-demo` garde la version du 20/11). Jamais de force-push. Jamais de fusion ni de push sans accord.
+- Branche de travail depuis le 22/11 au soir : `claude/baoule-balise-improvements-wwf2je` (baoulé, suivi GPS, balises automatiques), poussée, en demande de fusion brouillon vers `sentinelle-vivant`. Elle reprend le code de la branche locale du PC `sentinelle-baoule-gps`, avec d'autres identifiants de commit (voir `docs/STATUS.md`, « Reprise sur le PC »). `feat/sentinelle-demo` garde la version du 20/11. Jamais de force-push. Jamais de fusion ni de push sans accord.
 - La clé de l'assistant vit dans `sentinelle/.env` (ignoré par Git). Ne jamais l'afficher, la journaliser ni la recopier.
 - Aucun secret, token ni `.env` versionné. Seul `.env.example` (sans valeurs sensibles).
 
@@ -52,6 +52,8 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - `pnpm demo:reset [--avec-signalement]` (destructif, DEMO_MODE uniquement) · `pnpm user:create …` (mode authentifié)
 - `pnpm assistant:check` (appels réels à Gemini : liste des modèles, appel minimal, appel de fonction ; n'affiche jamais la clé)
 - `pnpm alert:check` (configuration de l'e-mail d'alerte, sans envoi) · `pnpm alert:check --envoyer` (un message d'essai RÉEL au destinataire de test)
+- `pnpm baoule:check` (essai RÉEL du service local de parole : moteur d'écoute, temps, questions retrouvées) · `pnpm baoule:test` (service de parole contre de faux moteurs, sans modèle ; demande numpy et soundfile)
+- Voix en baoulé dans le navigateur : `BAOULE=faux … playwright test --project=baoule-faux` (faux service de parole, tourne partout) ; `BAOULE=1 … --project=baoule` (vrais modèles, service local lancé).
 - `ASSISTANT_AI=off` coupe l'assistant IA (lecture directe des données) ; les tests de navigateur tournent ainsi.
 - Sous Windows : `PW_CHANNEL=chrome pnpm e2e` (Chrome installé). Après `pnpm build`, redémarrer le serveur (les fichiers compilés sont listés au démarrage).
 - Conversation en direct, appels réels à l'API Live avec un faux micro : `DIRECT=1 PW_CHANNEL=chrome pnpm --filter @sentinelle/web exec playwright test --project=direct --project=direct-question --project=direct-confirme --project=direct-incident`.
@@ -74,6 +76,8 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - Aide à la saisie d'une observation : le formulaire est rempli automatiquement, jamais enregistré ; ce que le modèle propose est recoupé avec la phrase (ni heure, ni lieu, ni « date inconnue » que la personne n'a pas dits) ; l'animal reste celui du formulaire.
 - Assistant : faits issus des fonctions de `farm.ts` uniquement, cinq natures d'information étiquetées, trois dates distinguées, aucune écriture sans brouillon puis confirmation, aucun faux temps réel.
 - Balises : toujours « la balise associée à tel animal », jamais « l'animal s'évade » ; source de la mesure (GPS du téléphone ou simulée) affichée partout. Un éloignement ouvre un seul incident par épisode ; l'e-mail d'alerte est facultatif, désactivé par défaut, un seul par épisode, vers un destinataire fixé côté serveur, et l'écran n'affiche que ce que le fournisseur a répondu (« accepté », jamais « lu ») ; la distance vient du téléphone, pas d'une mesure radio.
+- Suivi GPS : le serveur ne garde qu'une position relative au repère, jamais les coordonnées d'une mesure ; « Suivi GPS » n'est écrit que pour une position venue d'un GPS ; la trajectoire est celle des points reçus, sans interpolation.
+- Baoulé : la voix seulement, l'interface écrite reste en français. Aucun modèle ne formule un fait : question rapprochée d'une liste (jamais devinée), faits lus comme en français, gabarits fixes de `baoule-phrases.ts`, nombres écrits par règle. Les phrases restent « premier jet » tant que `validated` est faux, et l'écran le dit. L'écrit n'attend jamais la voix, et rien n'est présenté comme dit sans l'avoir été.
 - Conversation en direct : semi-duplex ; le modèle n'écrit rien ; « je confirme » est jugé par une règle fixe sur la phrase entendue, pour un brouillon précis, une seule fois ; ne jamais dire que la parole en direct est validée phrase par phrase.
 - Chaque analyse stocke paramètres, `engineVersion`, instantané des données et `snapshotHash` (D-03).
 - Corrections = nouvelles révisions, jamais d'écrasement. Pas de score de contamination.
@@ -97,7 +101,9 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - `docs/mockups/` — maquette statique initiale
 - `docs/DEMO.md` — script, préparation, secours, limites, pitch, travaux à déclarer
 - `docs/DESIGN.md` — tokens, contrastes mesurés, principes
+- `docs/BAOULE.md` — recherche sur le baoulé, essais réels, voix en baoulé (chaîne, installation, ce qui reste à vérifier)
+- `docs/ESSAIS.md` — essais humains à faire (voix, téléphone, GPS, baoulé)
 - `docs/GUIDE.md` — guide complet : installation, utilisation, IA, import, administration, dépannage
 
 ## Modules API
-`notify.ts` (e-mail d'alerte d'un incident : fournisseur Resend, activation explicite, statut réel) · `live.ts` (conversation en direct : relais WebSocket `/api/assistant/live` vers l'API Live de Gemini, confirmation liée au brouillon, bornes de consommation) · `beacons.ts` (balises de démonstration : un téléphone transmet sa distance à un repère ; routes `/api/farm/devices` et `/api/devices/:id/*`) · `farm.ts` (SENTINELLE VIVANT : lecture de l'exploitation, brouillon d'observation, routes `/api/farm/*`) · `assistant.ts` (conversation : mode direct sans IA, mode IA par fonctions) · `gemini.ts` (client REST) · `seed-living.ts` (jeu vivant daté relativement à la réinitialisation) · `app.ts` (cœur, enquêtes, corrections, historique) · `auth.ts` (D-13) · `import.ts` (D-14) · `assist.ts` + `llm.ts` (D-15, D-18) · `idempotency.ts` (D-19) · `http.ts` · `db-tools.ts`, `users.ts`, `user-create.ts` (CLI)
+`baoule.ts` + `baoule-phrases.ts` (voix en baoulé : question rapprochée ou choisie, gabarits de réponse, nombres par règle, réponse en deux temps ; service local de parole `tools/baoule/serveur.py`) · `notify.ts` (e-mail d'alerte d'un incident : fournisseur Resend, activation explicite, statut réel) · `live.ts` (conversation en direct : relais WebSocket `/api/assistant/live` vers l'API Live de Gemini, confirmation liée au brouillon, bornes de consommation) · `beacons.ts` (balises de démonstration : un téléphone transmet sa distance à un repère ; routes `/api/farm/devices` et `/api/devices/:id/*`) · `farm.ts` (SENTINELLE VIVANT : lecture de l'exploitation, brouillon d'observation, routes `/api/farm/*`) · `assistant.ts` (conversation : mode direct sans IA, mode IA par fonctions) · `gemini.ts` (client REST) · `seed-living.ts` (jeu vivant daté relativement à la réinitialisation) · `app.ts` (cœur, enquêtes, corrections, historique) · `auth.ts` (D-13) · `import.ts` (D-14) · `assist.ts` + `llm.ts` (D-15, D-18) · `idempotency.ts` (D-19) · `http.ts` · `db-tools.ts`, `users.ts`, `user-create.ts` (CLI)
