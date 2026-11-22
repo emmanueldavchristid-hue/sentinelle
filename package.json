@@ -22,6 +22,7 @@
     "user:enable": "pnpm --filter @sentinelle/api user:enable",
     "assistant:check": "pnpm --filter @sentinelle/api assistant:check",
     "alert:check": "pnpm --filter @sentinelle/api alert:check",
-    "baoule:check": "pnpm --filter @sentinelle/api baoule:check"
+    "baoule:check": "pnpm --filter @sentinelle/api baoule:check",
+    "baoule:test": "python tools/baoule/test_serveur.py"
   }
 }

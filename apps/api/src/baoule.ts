@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -21,6 +22,13 @@ import { HttpError, type User } from './http.js';
  * préparer une observation, confirmer un brouillon. Une question non reconnue est dite non reconnue.
  *
  * Les phrases baoulé sont un premier jet tant que `BAOULE_PHRASES.validated` est faux : la réponse le signale toujours.
+ *
+ * Demande de Yvan après les essais au téléphone (22/11 : « il prend le temps avant de transcrire », « il ne répond pas ») :
+ * - la réponse part en deux temps (`voice: 'later'`) : ce qui a été entendu et les faits lus s'affichent dès que l'écoute a
+ *   fini, la voix est récupérée ensuite par son identifiant ; elle est calculée pendant ce temps ;
+ * - la voix baoulé répond aussi sans note vocale (`/api/assistant/baoule/question`) : une question choisie au toucher, une
+ *   alerte de balise, ou une question posée en français dont la réponse a un gabarit baoulé ;
+ * - les phrases de la réponse probable sont préparées à l'avance (`/preparer`) : la voix n'a alors plus rien à calculer.
  */
 export interface BaouleOptions {
   /** Adresse du service local de parole (http://127.0.0.1:8765). */
@@ -48,7 +56,12 @@ const FRENCH_QUESTION: Record<BaouleIntent, string> = {
 /** En dessous de ce score, ou si deux questions se valent, la question est dite non reconnue plutôt que devinée. */
 const MIN_SCORE = 0.5;
 const MIN_MARGIN = 0.05;
-const MAX_EXAMPLES = 8;
+/** Une question retrouvée seulement DANS une phrase plus longue doit y ressembler nettement plus (voir `windowed`). */
+const MIN_WINDOW_SCORE = 0.72;
+const MAX_EXAMPLES = 20;
+/** Une voix calculée reste disponible ce temps-là (réécoute comprise), puis elle est oubliée. */
+const VOICE_TTL_MS = 3 * 60_000;
+const MAX_VOICES = 60;
 
 /** Forme de comparaison : minuscules, sans ponctuation ni marques de ton, ɛ et ɔ ramenés à e et o (le modèle d'écoute hésite entre eux). */
 export function bciNorm(s: string): string {
@@ -85,10 +98,26 @@ export function similarity(a: string, b: string): number {
   return total ? (2 * common) / total : 0;
 }
 
+/**
+ * Ressemblance d'une question connue avec ce qui a été entendu, en acceptant qu'elle soit dite AU MILIEU d'une phrase plus
+ * longue (« bonjour, …question…, merci ») : la question est comparée à chaque suite de mots de même longueur. Une telle
+ * correspondance partielle ne compte que si elle est nette (`MIN_WINDOW_SCORE`) : sur quelques mots courts, deux phrases
+ * baoulé sans rapport partagent facilement des particules (« yɛ ɔ », « kɛ »).
+ */
+export function windowed(heard: string, form: string): number {
+  const whole = similarity(heard, form);
+  const h = bciNorm(heard).split(' ').filter(Boolean);
+  const n = bciNorm(form).split(' ').filter(Boolean).length;
+  if (n < 3 || h.length <= n + 1) return whole;
+  let best = 0;
+  for (const size of [n, n + 1]) for (let i = 0; i + size <= h.length; i++) best = Math.max(best, similarity(h.slice(i, i + size).join(' '), form));
+  return best >= MIN_WINDOW_SCORE ? Math.max(whole, best) : whole;
+}
+
 /** Question la plus proche de ce qui a été entendu ; « unknown » si rien n'est assez proche ou si deux questions se valent. */
 export function matchIntent(heard: string, forms: Record<BaouleIntent, readonly string[]>): { intent: BaouleIntent | 'unknown'; score: number } {
   if (bciNorm(heard).length < 3) return { intent: 'unknown', score: 0 };
-  const scored = INTENTS.map((intent) => ({ intent, score: Math.max(0, ...forms[intent].map((f) => similarity(heard, f))) })).sort((a, b) => b.score - a.score);
+  const scored = INTENTS.map((intent) => ({ intent, score: Math.max(0, ...forms[intent].map((f) => windowed(heard, f))) })).sort((a, b) => b.score - a.score);
   const [best, second] = scored as [(typeof scored)[number], (typeof scored)[number]];
   if (best.score < MIN_SCORE || best.score - second.score < MIN_MARGIN) return { intent: 'unknown', score: best.score };
   return best;
@@ -158,15 +187,36 @@ export function registerBaoule(ctx: BaouleCtx, tools: FarmTools, opts: BaouleOpt
   });
 
   // État du service local, relu de temps en temps : l'écran ne propose le baoulé que si l'écoute ET la voix répondent.
-  let health: { stt: boolean; tts: boolean; checkedAt: number; reason: string | null } = { stt: false, tts: false, checkedAt: 0, reason: opts ? 'Service local de parole en baoulé pas encore joint.' : 'Voix en baoulé non activée sur ce serveur.' };
+  let health: { stt: boolean; tts: boolean; engine: string | null; checkedAt: number; reason: string | null } = { stt: false, tts: false, engine: null, checkedAt: 0, reason: opts ? 'Service local de parole en baoulé pas encore joint.' : 'Voix en baoulé non activée sur ce serveur.' };
+  /**
+   * Demande au service de parole de préparer des phrases à l'avance (elles sont ensuite dites sans calcul). Sans effet, et
+   * sans erreur, si le service ne le propose pas ou ne répond pas : la phrase sera simplement calculée au moment de la dire.
+   */
+  async function warm(texts: string[]): Promise<number> {
+    const list = [...new Set(texts.filter(Boolean))];
+    if (!opts || !list.length) return 0;
+    try {
+      const r = await f(`${opts.url}/warm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ texts: list }), signal: AbortSignal.timeout(5000) });
+      return r.ok ? list.length : 0;
+    } catch {
+      return 0;
+    }
+  }
+  /** Phrases sans nombre : toujours les mêmes, donc préparées dès que la voix répond. */
+  const FIXED = Object.values(BAOULE_PHRASES.answers)
+    .map((a) => a.bci)
+    .filter((t) => !t.includes('{N}'));
+  let fixedWarmed = false;
   async function check() {
     if (!opts) return;
     try {
       const r = await f(`${opts.url}/health`, { signal: AbortSignal.timeout(3000) });
-      const j = (await r.json()) as { stt?: boolean; tts?: boolean };
-      health = { stt: !!j.stt, tts: !!j.tts, checkedAt: Date.now(), reason: j.stt && j.tts ? null : `Service local de parole en baoulé incomplet (écoute : ${j.stt ? 'prête' : 'absente'}, voix : ${j.tts ? 'prête' : 'absente'}).` };
+      const j = (await r.json()) as { stt?: boolean; tts?: boolean; engine?: unknown };
+      health = { stt: !!j.stt, tts: !!j.tts, engine: typeof j.engine === 'string' ? j.engine.slice(0, 80) : null, checkedAt: Date.now(), reason: j.stt && j.tts ? null : `Service local de parole en baoulé incomplet (écoute : ${j.stt ? 'prête' : 'absente'}, voix : ${j.tts ? 'prête' : 'absente'}).` };
+      if (j.tts && !fixedWarmed) fixedWarmed = (await warm(FIXED)) > 0;
     } catch {
-      health = { stt: false, tts: false, checkedAt: Date.now(), reason: 'Service local de parole en baoulé injoignable (tools/baoule/serveur.py n’est pas lancé).' };
+      health = { stt: false, tts: false, engine: null, checkedAt: Date.now(), reason: 'Service local de parole en baoulé injoignable (tools/baoule/serveur.py n’est pas lancé).' };
+      fixedWarmed = false;
     }
   }
   if (opts) {
@@ -181,9 +231,10 @@ export function registerBaoule(ctx: BaouleCtx, tools: FarmTools, opts: BaouleOpt
     reason: opts && health.stt && health.tts ? null : health.reason,
     validated: BAOULE_PHRASES.validated,
     examples: INTENTS.reduce((n, i) => n + examples[i].length, 0),
+    engine: health.engine,
   });
 
-  async function listen(audioBase64: string): Promise<{ text: string; ms: number }> {
+  async function listen(audioBase64: string): Promise<{ text: string; ms: number; silence: boolean }> {
     const t = Date.now();
     let r: Response;
     try {
@@ -191,9 +242,9 @@ export function registerBaoule(ctx: BaouleCtx, tools: FarmTools, opts: BaouleOpt
     } catch {
       throw new HttpError(503, 'BAOULE_UNAVAILABLE', 'Le service local d’écoute en baoulé ne répond pas. Utilisez le français.');
     }
-    const j = (await r.json().catch(() => ({}))) as { text?: string; error?: string };
+    const j = (await r.json().catch(() => ({}))) as { text?: string; error?: string; silence?: boolean };
     if (!r.ok || typeof j.text !== 'string') throw new HttpError(502, 'BAOULE_FAILED', 'L’enregistrement n’a pas pu être transcrit. Réessayez, ou utilisez le français.');
-    return { text: j.text.trim().slice(0, 400), ms: Date.now() - t };
+    return { text: j.text.trim().slice(0, 400), ms: Date.now() - t, silence: j.silence === true };
   }
 
   async function speak(text: string): Promise<{ audio: string | null; ms: number }> {
@@ -207,6 +258,35 @@ export function registerBaoule(ctx: BaouleCtx, tools: FarmTools, opts: BaouleOpt
       return { audio: null, ms: Date.now() - t };
     }
   }
+
+  /**
+   * Voix en deux temps : le calcul part tout de suite, la réponse écrite n'attend pas. Le son est rendu ensuite par son
+   * identifiant, au seul utilisateur qui a posé la question, pendant quelques minutes (réécoute comprise), puis oublié.
+   */
+  const voices = new Map<string, { userId: string; at: number; result: Promise<{ audio: string | null; ms: number }> }>();
+  function speakLater(u: User, text: string): string {
+    const now = Date.now();
+    for (const [k, v] of voices) if (now - v.at > VOICE_TTL_MS || voices.size >= MAX_VOICES) voices.delete(k);
+    const id = randomBytes(12).toString('base64url');
+    voices.set(id, { userId: u.id, at: now, result: speak(text) });
+    return id;
+  }
+
+  /** La réponse à une question reconnue (ou non) : lecture des données, gabarit baoulé, voix tout de suite ou en deux temps. */
+  async function answer(u: User, q: { intent: BaouleIntent | 'unknown'; score: number; heard: string; via: BaouleReply['via']; silence?: boolean; listenMs: number }, later: boolean): Promise<BaouleReply> {
+    const how = q.via === 'voice' ? 'Question dite en baoulé, rapprochée de' : 'Réponse dite en baoulé à la question';
+    const base: AssistantReply =
+      q.intent === 'unknown'
+        ? { mode: 'direct', provider: null, intent: 'unknown', text: null, notice: q.silence ? 'Aucune parole n’a été entendue dans l’enregistrement : rien n’a été transcrit, aucune donnée n’a été lue.' : 'Question en baoulé non reconnue : aucune donnée n’a été lue. Aucune réponse n’est devinée.', results: [], ungrounded: false, suggestions: [] }
+        : await answerDirect(tools, u, { text: FRENCH_QUESTION[q.intent] } as AskInput);
+    const reply: AssistantReply = q.intent === 'unknown' ? base : { ...base, notice: `${how} « ${FRENCH_QUESTION[q.intent]} »${q.via === 'voice' ? ' par une règle de ressemblance' : ''}. Lecture directe des données, sans IA générative.` };
+    const said = composeAnswer(q.intent, reply);
+    const common = { heard: q.heard, intent: q.intent, score: Math.round(q.score * 100) / 100, question: q.intent === 'unknown' ? null : FRENCH_QUESTION[q.intent], reply, spoken: said.bci, spokenFr: said.fr, validated: BAOULE_PHRASES.validated, listenMs: q.listenMs, via: q.via, silence: q.silence === true };
+    if (later) return { ...common, audio: null, voiceId: speakLater(u, said.bci), speakMs: 0 };
+    const voice = await speak(said.bci);
+    return { ...common, audio: voice.audio, voiceId: null, speakMs: voice.ms };
+  }
+  const wantsLater = (body: unknown) => (body as { voice?: unknown } | null)?.voice === 'later';
 
   const audioOf = (body: unknown): string => {
     const b = body as { audio?: unknown; mimeType?: unknown } | null;
@@ -223,14 +303,48 @@ export function registerBaoule(ctx: BaouleCtx, tools: FarmTools, opts: BaouleOpt
     ready();
     const heard = await listen(audioOf(req.body));
     const m = matchIntent(heard.text, forms());
-    const base: AssistantReply =
-      m.intent === 'unknown'
-        ? { mode: 'direct', provider: null, intent: 'unknown', text: null, notice: 'Question en baoulé non reconnue : aucune donnée n’a été lue. Aucune réponse n’est devinée.', results: [], ungrounded: false, suggestions: [] }
-        : await answerDirect(tools, u, { text: FRENCH_QUESTION[m.intent] } as AskInput);
-    const reply: AssistantReply = m.intent === 'unknown' ? base : { ...base, notice: `Question dite en baoulé, rapprochée de « ${FRENCH_QUESTION[m.intent]} » par une règle de ressemblance. Lecture directe des données, sans IA générative.` };
-    const answer = composeAnswer(m.intent, reply);
-    const voice = await speak(answer.bci);
-    return { heard: heard.text, intent: m.intent, score: Math.round(m.score * 100) / 100, question: m.intent === 'unknown' ? null : FRENCH_QUESTION[m.intent], reply, spoken: answer.bci, spokenFr: answer.fr, audio: voice.audio, validated: BAOULE_PHRASES.validated, listenMs: heard.ms, speakMs: voice.ms };
+    return answer(u, { intent: m.intent, score: m.score, heard: heard.text, via: 'voice', silence: heard.silence, listenMs: heard.ms }, wantsLater(req.body));
+  });
+
+  /**
+   * La voix baoulé sans note vocale : la question est CHOISIE (bouton, alerte de balise, ou question posée en français dont
+   * la réponse a un gabarit baoulé). Rien n'est écouté ni rapproché : seules la lecture des données et la voix servent.
+   * « unknown » fait dire « je n'ai pas compris » (une question française sans équivalent baoulé, par exemple).
+   */
+  ctx.app.post('/api/assistant/baoule/question', async (req): Promise<BaouleReply> => {
+    const u = await ctx.currentUser(req);
+    ready();
+    const intent = (req.body as { intent?: unknown } | null)?.intent;
+    if (typeof intent !== 'string' || !(intent === 'unknown' || INTENTS.includes(intent as BaouleIntent))) throw new HttpError(400, 'VALIDATION', 'Question inconnue.');
+    return answer(u, { intent: intent as BaouleIntent | 'unknown', score: 1, heard: '', via: 'choice', listenMs: 0 }, wantsLater(req.body));
+  });
+
+  /** Le son d'une réponse demandée en deux temps. Rendu à celui qui a posé la question, et à lui seul. */
+  ctx.app.get('/api/assistant/baoule/voix/:id', async (req, reply) => {
+    const u = await ctx.currentUser(req);
+    const v = voices.get((req.params as { id: string }).id);
+    if (!v || v.userId !== u.id || Date.now() - v.at > VOICE_TTL_MS) throw new HttpError(404, 'NOT_FOUND', 'Cette réponse parlée n’est plus disponible. Reposez la question.');
+    const r = await v.result;
+    if (!r.audio) throw new HttpError(502, 'BAOULE_FAILED', 'La voix en baoulé a échoué : rien n’a été dit. La réponse écrite, en français, reste entière.');
+    return reply.header('content-type', 'audio/wav').header('cache-control', 'no-store').header('x-speak-ms', String(r.ms)).send(Buffer.from(r.audio, 'base64'));
+  });
+
+  /**
+   * Prépare la voix des réponses que cet utilisateur obtiendrait MAINTENANT aux questions connues (lectures seules) : quand
+   * il pose sa question, la phrase et son nombre sont déjà prononcés. Appelé à l'ouverture de l'écran et après un changement.
+   */
+  ctx.app.post('/api/assistant/baoule/preparer', async (req): Promise<{ prepared: number }> => {
+    const u = await ctx.currentUser(req);
+    ready();
+    const texts: string[] = [...FIXED];
+    for (const intent of INTENTS) {
+      try {
+        texts.push(composeAnswer(intent, await answerDirect(tools, u, { text: FRENCH_QUESTION[intent] } as AskInput)).bci);
+      } catch {
+        /* une lecture qui échoue ici n'empêche pas de préparer les autres */
+      }
+    }
+    return { prepared: await warm(texts) };
   });
 
   /**

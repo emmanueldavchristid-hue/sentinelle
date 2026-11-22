@@ -394,6 +394,13 @@ const cache = new Map<string, string>(); // texte -> adresse locale du son déj�
 let player: HTMLAudioElement | null = null;
 let generation = 0;
 
+/** Autres voix de l'écran (la voix baoulé) : elles se taisent en même temps que la voix de synthèse. */
+const otherVoices = new Set<() => void>();
+export const onStopSpeech = (stop: () => void) => {
+  otherVoices.add(stop);
+  return () => void otherVoices.delete(stop);
+};
+
 export function stopSpeech() {
   generation++;
   if (player) {
@@ -401,6 +408,7 @@ export function stopSpeech() {
     player = null;
   }
   if (canSpeak()) window.speechSynthesis.cancel();
+  for (const stop of otherVoices) stop();
 }
 
 async function serverAudio(text: string, session: Session | null): Promise<string | null> {

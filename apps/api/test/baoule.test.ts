@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AssistantStatus, BaouleReply, SituationData, ToolResult } from '@sentinelle/contracts';
 import { buildApp } from '../src/app.js';
-import { bciNorm, composeAnswer, matchIntent, similarity } from '../src/baoule.js';
+import { bciNorm, composeAnswer, matchIntent, similarity, windowed } from '../src/baoule.js';
 import { BAOULE_PHRASES, bciNumber } from '../src/baoule-phrases.js';
 import { type Db, migrate } from '../src/db.js';
 import { resetAndSeed } from '../src/seed.js';
@@ -62,6 +62,44 @@ describe('Rapprochement d’une question entendue', () => {
     expect(matchIntent('saki bo tula wete kpa', Q).intent).toBe('unknown');
     expect(matchIntent('saki bo tula wete kpa', own).intent).toBe('beacons');
   });
+
+  it('retrouve une question dite au milieu d’une phrase plus longue', () => {
+    expect(similarity('aniki o, min nnɛn mun be ti sɛ, n su usa wɔ', Q.situation[0]!)).toBeLessThan(0.75);
+    expect(windowed('aniki o, min nnɛn mun be ti sɛ, n su usa wɔ', Q.situation[0]!)).toBe(1);
+    expect(matchIntent('aniki o, min nnɛn mun be ti sɛ, n su usa wɔ', Q).intent).toBe('situation');
+    expect(matchIntent('yaci, kan kle min, nnɛn benin yɛ ɔ wɔli mmua andɛ nglɛmun', Q).intent).toBe('beacons');
+  });
+
+  /**
+   * Transcriptions RÉELLES du modèle d'écoute, relevées sur le PC le 22/11 (questions de référence dites par la voix de
+   * synthèse). Plusieurs sont fausses : le modèle invente sur un son d'une à deux secondes. La règle peut ne pas reconnaître
+   * la question, mais elle ne doit JAMAIS en retenir une autre : une mauvaise question ferait dire les mauvais chiffres.
+   */
+  it('transcriptions réelles du 22/11 : jamais rapprochées d’une autre question que celle posée', () => {
+    const real: ['situation' | 'changes' | 'missing' | 'beacons' | null, string][] = [
+      ['situation', 'mi nnɛnʼm be ti sɛ.'],
+      ['situation', 'kɛ nnɛn’n niɛn nga sran’m be nzuɛn’n i sasalɛ’n ti’n, ɔ ti kpa nnɛn kpa.'],
+      ['situation', 'kɛ nnɛn’n niɛnnɛlɛ bɔbɔ.'],
+      ['situation', 'kɛ be yili lɔ’n, be ti kpa nnɛn nga sran’m be kloli'],
+      ['changes', "n'gnais lɔ n'vle uflɛ atin kɛ ɔ fia mɔ."],
+      ['changes', "n'glu yɔ kaki li kɔ fian man."],
+      ['changes', '“?ngue like uflɛ yɛ ɔ juli?”'],
+      ['missing', 'kɛ nvle’n la nun, nvle’n la nvle’n i klɔ lɔ nga sran’m be nzuɛn’n i sasalɛ’n ti’n, be ti kpa.'],
+      ['missing', 'dɛ mɔ be ti kpa’n, be ti kpa nnɛn kpanngɔ sa tɛ yolɛ’n i su lɔ.'],
+      ['missing', 'andɛ’n be i yɛ ɔka.'],
+      ['missing', 'fie dilɛ junman’n ti kinnjin kpa côte d’ivoire lɔ.'],
+      ['beacons', "nnɛn benin yɛ ɔ wɔ ni n'gua?"],
+      ['beacons', "n'niɛn benin yɛ ɔ wɔli n'gua?"],
+      [null, 'like nga nzowa seli kɛ ɔ yo min i.'],
+    ];
+    let found = 0;
+    for (const [asked, heard] of real) {
+      const m = matchIntent(heard, Q).intent;
+      expect(m === 'unknown' || m === asked, `« ${heard} » a été rapproché de ${m}`).toBe(true);
+      if (m === asked) found++;
+    }
+    expect(found).toBeGreaterThanOrEqual(7);
+  });
 });
 
 describe('Note vocale en baoulé (faux service de parole)', () => {
@@ -76,15 +114,21 @@ describe('Note vocale en baoulé (faux service de parole)', () => {
   });
 
   /** Faux service : « entend » le texte qu'on lui prépare, « dit » en renvoyant le texte reçu, pour que le test le lise. */
-  function rig(state: { hears: string; ttsFails?: boolean; down?: boolean; said: string[] }) {
+  function rig(state: { hears: string; silence?: boolean; ttsFails?: boolean; down?: boolean; said: string[]; warmed?: string[][]; ttsDelayMs?: number }) {
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (state.down) throw new Error('ECONNREFUSED');
-      if (url.endsWith('/health')) return new Response(JSON.stringify({ stt: true, tts: true }), { status: 200 });
-      if (url.endsWith('/stt')) return new Response(JSON.stringify({ text: state.hears }), { status: 200 });
+      if (url.endsWith('/health')) return new Response(JSON.stringify({ stt: true, tts: true, engine: 'faux moteur de test' }), { status: 200 });
+      if (url.endsWith('/stt')) return new Response(JSON.stringify({ text: state.hears, silence: state.silence === true }), { status: 200 });
+      if (url.endsWith('/warm')) {
+        if (!state.warmed) return new Response('{}', { status: 404 });
+        state.warmed.push((JSON.parse(String(init?.body)) as { texts: string[] }).texts);
+        return new Response(JSON.stringify({ queued: 1 }), { status: 200 });
+      }
       if (url.endsWith('/tts')) {
         if (state.ttsFails) return new Response('{}', { status: 503 });
         const text = (JSON.parse(String(init?.body)) as { text: string }).text;
+        if (state.ttsDelayMs) await new Promise((r) => setTimeout(r, state.ttsDelayMs));
         state.said.push(text);
         return new Response(Buffer.from(`WAV:${text}`), { status: 200, headers: { 'content-type': 'audio/wav' } });
       }
@@ -159,6 +203,91 @@ describe('Note vocale en baoulé (faux service de parole)', () => {
     expect((await post(app, '/api/assistant/baoule', {})).json()).toMatchObject({ error: 'BAOULE_UNAVAILABLE' });
     expect((await post(app, '/api/assistant/baoule', { audio: 'abc' })).statusCode).toBe(400);
     expect((await post(app, '/api/assistant/baoule', { mimeType: 'audio/ogg' })).statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('enregistrement sans parole : rien n’est transcrit, la voix dit qu’elle n’a pas compris, et l’écran dit pourquoi', async () => {
+    const app = await rig({ hears: '', silence: true, said: [] });
+    const r = (await post(app, '/api/assistant/baoule', {})).json() as BaouleReply;
+    expect(r).toMatchObject({ intent: 'unknown', silence: true, heard: '', spoken: BAOULE_PHRASES.answers.unknown.bci });
+    expect(r.reply.notice).toMatch(/Aucune parole n’a été entendue/);
+    expect(r.reply.results).toEqual([]);
+    await app.close();
+  });
+
+  it('réponse en deux temps : les faits arrivent sans attendre la voix, qui se récupère ensuite, par celui qui a demandé', async () => {
+    const state = { hears: 'min nnɛn mun be ti sɛ', said: [] as string[], ttsDelayMs: 300 };
+    const app = await rig(state);
+    const t = Date.now();
+    const r = (await post(app, '/api/assistant/baoule', { voice: 'later' })).json() as BaouleReply;
+    expect(Date.now() - t).toBeLessThan(250);
+    expect(r).toMatchObject({ intent: 'situation', audio: null, via: 'voice' });
+    expect(r.voiceId).toMatch(/^[\w-]{12,}$/);
+    expect(r.reply.results[0]!.tool).toBe('situation');
+    // Le son : exactement le texte affiché, rendu deux fois de suite si on réécoute, sans recalcul.
+    const first = await app.inject({ url: `/api/assistant/baoule/voix/${r.voiceId}`, headers: FARMER });
+    expect(first.statusCode).toBe(200);
+    expect(first.headers['content-type']).toBe('audio/wav');
+    expect(first.rawPayload.toString()).toBe(`WAV:${r.spoken}`);
+    expect((await app.inject({ url: `/api/assistant/baoule/voix/${r.voiceId}`, headers: FARMER })).rawPayload.toString()).toBe(`WAV:${r.spoken}`);
+    expect(state.said).toEqual([r.spoken]);
+    // Un autre utilisateur, ou un identifiant inventé, n'obtient rien.
+    expect((await app.inject({ url: `/api/assistant/baoule/voix/${r.voiceId}`, headers: { 'x-demo-user': 'U-AGENT' } })).statusCode).toBe(404);
+    expect((await app.inject({ url: '/api/assistant/baoule/voix/inconnu', headers: FARMER })).statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('réponse en deux temps, voix en panne : la lecture est entière, et le son est refusé clairement', async () => {
+    const app = await rig({ hears: 'ngue yɛ ɔ ka', ttsFails: true, said: [] });
+    const r = (await post(app, '/api/assistant/baoule', { voice: 'later' })).json() as BaouleReply;
+    expect(r.reply.results[0]!.tool).toBe('missing');
+    const v = await app.inject({ url: `/api/assistant/baoule/voix/${r.voiceId}`, headers: FARMER });
+    expect(v.statusCode).toBe(502);
+    expect(v.json()).toMatchObject({ error: 'BAOULE_FAILED' });
+    await app.close();
+  });
+
+  it('question choisie (bouton, alerte, question en français) : même lecture, même gabarit, sans écoute', async () => {
+    const state = { hears: 'ne doit pas servir', said: [] as string[] };
+    const app = await rig(state);
+    const truth = ((await app.inject({ url: '/api/farm/situation', headers: FARMER })).json() as ToolResult<SituationData>).data;
+    const r = (await app.inject({ method: 'POST', url: '/api/assistant/baoule/question', headers: FARMER, payload: { intent: 'situation' } })).json() as BaouleReply;
+    expect(r).toMatchObject({ intent: 'situation', via: 'choice', heard: '', score: 1, listenMs: 0 });
+    expect(r.spoken).toContain(`Be klɛli nnɛn ${bciNumber(truth.animals.total)}.`);
+    expect(r.reply.notice).toMatch(/Réponse dite en baoulé à la question « Quelle est la situation de mon élevage/);
+    expect(r.reply.notice).not.toMatch(/ressemblance/);
+    expect(Buffer.from(r.audio!, 'base64').toString()).toBe(`WAV:${r.spoken}`);
+    // Sans équivalent baoulé : la voix dit qu'elle n'a pas compris, sans rien lire.
+    const none = (await app.inject({ method: 'POST', url: '/api/assistant/baoule/question', headers: FARMER, payload: { intent: 'unknown' } })).json() as BaouleReply;
+    expect(none).toMatchObject({ intent: 'unknown', spoken: BAOULE_PHRASES.answers.unknown.bci });
+    expect(none.reply.results).toEqual([]);
+    expect((await app.inject({ method: 'POST', url: '/api/assistant/baoule/question', headers: FARMER, payload: { intent: 'météo' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url: '/api/assistant/baoule/question', payload: { intent: 'situation' }, headers: { 'x-demo-user': 'U-INCONNU' } })).statusCode).toBeGreaterThanOrEqual(400);
+    await app.close();
+  });
+
+  it('préparation : les phrases fixes et les réponses du moment sont données d’avance à la voix', async () => {
+    const state = { hears: '', said: [] as string[], warmed: [] as string[][] };
+    const app = await rig(state);
+    const truth = ((await app.inject({ url: '/api/farm/situation', headers: FARMER })).json() as ToolResult<SituationData>).data;
+    const r = (await app.inject({ method: 'POST', url: '/api/assistant/baoule/preparer', headers: FARMER })).json() as { prepared: number };
+    expect(r.prepared).toBeGreaterThanOrEqual(8);
+    const texts = state.warmed.flat();
+    expect(texts).toContain(BAOULE_PHRASES.answers.unknown.bci);
+    expect(texts).toContain(BAOULE_PHRASES.answers.screen.bci);
+    expect(texts.some((t) => t.includes(`Be klɛli nnɛn ${bciNumber(truth.animals.total)}.`))).toBe(true);
+    expect(texts.every((t) => !t.includes('{N}'))).toBe(true);
+    // Rien n'est dit, rien n'est lu à voix haute : seule la préparation part.
+    expect(state.said).toEqual([]);
+    const status = (await app.inject({ url: '/api/assistant/status', headers: FARMER })).json() as AssistantStatus;
+    expect(status.voice?.baoule?.engine).toBe('faux moteur de test');
+    await app.close();
+  });
+
+  it('préparation : un service de parole plus ancien, sans cette fonction, ne casse rien', async () => {
+    const app = await rig({ hears: 'ngue yɛ ɔ ka', said: [] });
+    expect((await app.inject({ method: 'POST', url: '/api/assistant/baoule/preparer', headers: FARMER })).json()).toEqual({ prepared: 0 });
+    expect(((await post(app, '/api/assistant/baoule', {})).json() as BaouleReply).intent).toBe('missing');
     await app.close();
   });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { beaconName, draftFingerprint, isSpokenCancellation, normalizeSpoken, spokenConfirmation, type AnimalData, type AssistantReply, type BeaconsData, type ChangesData, type LiveServerMessage, type ObservationDraftData, type SiteSummary, type SituationData, type ToolResult } from '@sentinelle/contracts';
+import { beaconName, draftFingerprint, isSpokenCancellation, normalizeSpoken, spokenConfirmation, type AnimalData, type AssistantReply, type BaouleIntent, type BeaconsData, type ChangesData, type LiveServerMessage, type ObservationDraftData, type SiteSummary, type SituationData, type ToolResult } from '@sentinelle/contracts';
 import { api, ApiFailure, errorMessage, NetworkError } from '../api';
 import { enqueueObservation } from '../local';
 import { formatTemporal, type TemporalValue } from '@sentinelle/domain';
@@ -8,6 +8,7 @@ import { BeaconAlert, BeaconsPanel } from '../farm/Beacons';
 import { Constellation } from '../farm/Constellation';
 import { Zone } from '../farm/Zone';
 import { BaouleTalk } from '../farm/Baoule';
+import { askBaoule, baouleIntentOf, baouleRepliesPref, playBaouleReply, unlockBaouleVoice } from '../farm/baouleVoice';
 import { LiveTalk, type LiveHandle } from '../farm/Live';
 import { canSpeak, Dictation, playSpeech, stopSpeech, voiceRepliesPref, type MicPhase, type VoiceVia } from '../farm/Voice';
 import { DraftCard, describeDraft, EvidenceDialog, fmtInstant, fmtState, PlainAnswer, plainSentence, ResultView, SimpleDraft, SourceChip, Timeline, type DraftValues } from '../farm/parts';
@@ -429,13 +430,33 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
   /** Vrai tant qu'une conversation en direct est ouverte : la voix de synthèse se tait, l'assistant parle déjà. */
   const liveOn = useRef(false);
   const autoSay = (id: string, said: string) => !liveOn.current && voice.current.on && voice.current.say(id, said);
+  // Réponses en baoulé : l'alerte de balise et les réponses qui ont une phrase baoulé sont dites par la voix baoulé du serveur.
+  const [baouleReplies, setBaouleReplies] = useState(baouleRepliesPref.get);
+  const baoule = useRef({ on: baouleReplies, available: false });
+  baoule.current = { on: baouleReplies, available: !!assistant?.voice?.baoule?.available && !offline };
+  const baouleOn = () => baoule.current.on && baoule.current.available && !liveOn.current;
+  /** Dit en baoulé la réponse à une question connue. Si la voix baoulé ne peut pas la dire, elle est dite en français, comme avant. */
+  const sayBaoule = (id: string, intent: BaouleIntent, french: string) => {
+    const inFrench = () => voice.current.say(id, french);
+    void askBaoule(intent, session)
+      .then((r) => playBaouleReply(r, session, (st) => (st === 'failed' || st === 'blocked') && inFrench()))
+      .catch(inFrench);
+  };
+  // Après un rechargement de page, le premier appui (où qu'il soit) autorise la voix baoulé à jouer plus tard sur ce téléphone.
+  useEffect(() => {
+    if (!baouleReplies) return;
+    window.addEventListener('pointerdown', unlockBaouleVoice, { once: true });
+    return () => window.removeEventListener('pointerdown', unlockBaouleVoice);
+  }, [baouleReplies]);
   // Une balise qui sort de sa zone est aussi annoncée à voix haute, une fois, si les réponses vocales sont activées.
   const alertKey = (beacons.data?.data.alerts ?? []).join(',');
   const lastAlert = useRef('');
   useEffect(() => {
     if (alertKey && alertKey !== lastAlert.current) {
       const out = beaconList.filter((b) => beacons.data!.data.alerts.includes(b.id));
-      autoSay('alerte-balise', `Attention. ${out.map((b) => `La balise ${beaconName(b)}${b.animalId ? `, associée à ${b.animalId},` : ''} est hors de sa zone`).join('. ')}.`);
+      const french = `Attention. ${out.map((b) => `La balise ${beaconName(b)}${b.animalId ? `, associée à ${b.animalId},` : ''} est hors de sa zone`).join('. ')}.`;
+      if (baouleOn() && voice.current.on) sayBaoule('alerte-balise', 'beacons', french);
+      else autoSay('alerte-balise', french);
     }
     lastAlert.current = alertKey;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -479,8 +500,11 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
         const compared = reply.intent === 'why_changed' && compare && updated ? { from: compare.from, to: compare.to, before: updated.update!.previousSummary, after: updated.update!.currentSummary } : null;
         conversation.patch(ex.id, { pending: false, reply, key, update, compared, draft: reply.results.some((r) => r.tool === 'prepare_observation') ? 'open' : null });
         // Réponses à voix haute : chaque réponse est aussi dite (toujours si la question a été dictée), sans rien changer à l'écran.
-        if (spoken) voice.current.say(ex.id, spokenText(reply, sitesRef.current));
-        else autoSay(ex.id, spokenText(reply, sitesRef.current));
+        const french = spokenText(reply, sitesRef.current);
+        const bci = baouleOn() && (spoken || voice.current.on) ? baouleIntentOf(reply.intent) : undefined;
+        if (bci) sayBaoule(ex.id, bci, french);
+        else if (spoken) voice.current.say(ex.id, french);
+        else autoSay(ex.id, french);
         if (reply.results.some((r) => r.tool === 'beacons')) setBeaconTick((n) => n + 1);
         const shown = reply.results.find((r) => r.tool === 'animal');
         if (shown) go(`elevage/animal/${encodeURIComponent(String(shown.params.animalId))}`);
@@ -1025,11 +1049,17 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
               offline={offline}
               detailed={detailed}
               maxSeconds={Math.min(20, assistant.voice.maxSeconds ?? 20)}
+              replies={baouleReplies}
+              onReplies={(on) => {
+                baouleRepliesPref.set(on);
+                setBaouleReplies(on);
+              }}
+              dataVersion={version}
               onStart={() => stopSpeech()}
               onReply={(r) =>
                 conversation.add({
                   id: crypto.randomUUID(),
-                  question: `Note vocale en baoulé (transcription automatique) : « ${r.heard || 'rien d’audible'} »`,
+                  question: r.via === 'choice' ? `Question choisie, réponse dite en baoulé : « ${r.question ?? ''} »` : `Note vocale en baoulé (transcription automatique) : « ${r.heard || 'rien d’audible'} »`,
                   askedAt: new Date().toISOString(),
                   pending: false,
                   error: null,

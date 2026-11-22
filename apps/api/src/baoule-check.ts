@@ -31,7 +31,7 @@ async function stt(wav: Buffer): Promise<{ text: string; ms: number }> {
 }
 const seconds = (wav: Buffer) => (wav.length - 44) / 2 / 24000;
 
-let health: { stt?: boolean; tts?: boolean; errors?: Record<string, string> };
+let health: { stt?: boolean; tts?: boolean; errors?: Record<string, string>; engine?: string | null; lang?: string | null };
 try {
   health = (await (await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) })).json()) as typeof health;
 } catch {
@@ -40,6 +40,7 @@ try {
 }
 console.log(`Service local : écoute ${health.stt ? 'prête' : 'ABSENTE'}, voix ${health.tts ? 'prête' : 'ABSENTE'}`, health.errors && Object.keys(health.errors).length ? health.errors : '');
 if (!health.stt || !health.tts) process.exit(1);
+console.log(`Moteur d’écoute : ${health.engine ?? 'non déclaré (service de parole d’avant le 22/11 au soir)'}${health.lang ? ` ; langue : ${health.lang}` : ''}`);
 console.log(`Phrases : ${BAOULE_PHRASES.validated ? 'validées par un locuteur' : 'PREMIER JET, validé par aucun locuteur'}\n`);
 mkdirSync(outDir, { recursive: true });
 

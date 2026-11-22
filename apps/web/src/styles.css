@@ -225,6 +225,24 @@
   .v-draft { border: 1.5px dashed var(--color-encre); background: var(--color-papier); border-radius: 4px; padding: 16px; }
   .v-field-flag { font-size: 12.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 
+  /* Voix en baoulé : un liseré latérite à gauche (la voix), des questions à toucher larges comme un pouce. */
+  .v-bci { border-top: 1px solid rgb(27 38 33 / 0.15); padding-top: 12px; }
+  .v-bci-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  @media (min-width: 640px) { .v-bci-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .v-bci-q { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 12px; border: 1px solid var(--color-filet); border-left: 4px solid var(--color-laterite); background: var(--color-papier); font-size: 15.5px; font-weight: 600; line-height: 1.2; color: var(--color-encre); text-align: left; cursor: pointer; transition: border-color 150ms var(--e-micro), background 150ms var(--e-micro); }
+  .v-bci-q:hover:not(:disabled) { border-color: var(--color-encre); border-left-color: var(--color-laterite); }
+  .v-bci-q:active:not(:disabled) { background: var(--color-laterite-soft); }
+  .v-bci-q:focus-visible { outline: 3px solid var(--color-laterite); outline-offset: 3px; }
+  .v-bci-q:disabled { opacity: 0.55; cursor: default; }
+  .v-bci-q[data-busy] { background: var(--color-laterite-soft); opacity: 1; }
+  .v-bci-row[data-urge] .v-bci-q { border-color: var(--color-laterite); }
+  /* Trois barres : une voix qui répond. Elles battent pendant que la réponse se prépare. */
+  .v-bci-mark { flex: none; width: 16px; height: 16px; background: linear-gradient(var(--color-laterite), var(--color-laterite)) 0 50% / 3px 8px no-repeat, linear-gradient(var(--color-laterite), var(--color-laterite)) 50% 50% / 3px 16px no-repeat, linear-gradient(var(--color-laterite), var(--color-laterite)) 100% 50% / 3px 11px no-repeat; }
+  .v-bci-q[data-busy] .v-bci-mark { animation: v-bci-beat 700ms ease-in-out infinite alternate; }
+  @keyframes v-bci-beat { from { transform: scaleY(0.45); } to { transform: scaleY(1); } }
+  @media (prefers-reduced-motion: reduce) { .v-bci-q[data-busy] .v-bci-mark { animation: none; } }
+  .v-bci-last { border-left: 3px solid var(--color-laterite); padding-left: 12px; font-size: 14.5px; }
+
   /* Chronologie */
   .v-timeline { list-style: none; margin: 0; padding: 0; }
   .v-event { display: grid; grid-template-columns: 108px 22px 1fr; column-gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--color-filet); }

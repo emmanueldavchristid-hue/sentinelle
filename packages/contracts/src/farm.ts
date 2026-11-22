@@ -417,6 +417,8 @@ export interface BaouleStatus {
   validated: boolean;
   /** Nombre de formulations enregistrées par un locuteur, qui servent de points de comparaison. */
   examples: number;
+  /** Moteur d'écoute chargé par le service local (« rapide » ou « origine »), tel qu'il le déclare ; null s'il ne le dit pas. */
+  engine?: string | null;
 }
 export type BaouleIntent = 'situation' | 'changes' | 'missing' | 'beacons';
 /**
@@ -434,8 +436,16 @@ export interface BaouleReply {
   reply: AssistantReply;
   spoken: string;
   spokenFr: string;
-  /** Réponse dite en baoulé (WAV, base64) ; null si la voix a échoué : rien n'a alors été dit. */
+  /**
+   * Réponse dite en baoulé (WAV, base64). Null si la voix a échoué (rien n'a alors été dit), ou si elle a été demandée en
+   * deux temps : `voiceId` permet alors de récupérer le son (`GET /api/assistant/baoule/voix/:id`).
+   */
   audio: string | null;
+  voiceId?: string | null;
+  /** « voice » : question dite en baoulé puis rapprochée ; « choice » : question choisie (bouton, alerte, question en français). */
+  via?: 'voice' | 'choice';
+  /** Aucune parole dans l'enregistrement : rien n'a été transcrit. */
+  silence?: boolean;
   validated: boolean;
   listenMs: number;
   speakMs: number;

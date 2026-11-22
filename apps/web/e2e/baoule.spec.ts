@@ -29,20 +29,27 @@ test('baoulé : une note vocale, une réponse dite en baoulé, les faits affich�
   await expect(zone.getByRole('note', { name: 'Limites de la voix en baoulé' })).toContainText('la réponse écrite, en français, fait foi');
 
   const answered = page.waitForResponse((r) => r.url().endsWith('/api/assistant/baoule'), { timeout: 200_000 });
+  // La réponse arrive en deux temps : les faits d'abord, puis le son, récupéré par son identifiant.
+  const voiced = page.waitForResponse((r) => r.url().includes('/api/assistant/baoule/voix/'), { timeout: 240_000 });
   const t0 = Date.now();
   await zone.getByRole('button', { name: 'Parler en baoulé' }).click();
   await expect(zone.getByText('Microphone actif.')).toBeVisible({ timeout: 15_000 });
   const res = await answered;
   expect(res.status()).toBe(200);
   const r = (await res.json()) as BaouleReply;
-  console.log(`[baoulé] entendu « ${r.heard} » → ${r.intent} (${r.score}) ; écoute ${(r.listenMs / 1000).toFixed(1)} s, voix ${(r.speakMs / 1000).toFixed(1)} s, total depuis l’appui ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  const shownAt = Date.now();
+  const voice = await voiced;
+  expect(voice.status()).toBe(200);
+  const sound = await voice.body();
+  console.log(`[baoulé] entendu « ${r.heard} » → ${r.intent} (${r.score}) ; écoute ${(r.listenMs / 1000).toFixed(1)} s ; faits affichés ${((shownAt - t0) / 1000).toFixed(1)} s après l’appui, voix reçue ${((Date.now() - t0) / 1000).toFixed(1)} s après l’appui (${voice.headers()['x-speak-ms'] ?? '?'} ms de calcul)`);
 
   // Quelque chose a été entendu, une réponse a été composée et réellement prononcée.
   expect(r.heard.length).toBeGreaterThan(2);
-  expect(r.audio && r.audio.length).toBeGreaterThan(20_000);
+  expect(r.audio).toBeNull();
+  expect(sound.length).toBeGreaterThan(20_000);
   expect(r.spoken).not.toMatch(/\d/);
 
-  const last = zone.getByRole('status', { name: 'Dernière note vocale en baoulé' });
+  const last = zone.getByRole('status', { name: 'Dernière réponse en baoulé' });
   await expect(last).toContainText(`« ${r.heard} »`);
   await expect(last).toContainText(`« ${r.spoken} »`);
   await expect(last).toContainText(r.spokenFr);
