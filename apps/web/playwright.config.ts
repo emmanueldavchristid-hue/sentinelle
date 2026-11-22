@@ -24,7 +24,7 @@ export default defineConfig({
     ...(executablePath ? { launchOptions: { executablePath, args: ['--no-sandbox'] } } : { channel: process.env.PW_CHANNEL || undefined }),
   },
   projects: [
-    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec|direct(-question|-confirme)?\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
     // Dictée avec un faux microphone (fichier WAV de synthèse) et un vrai appel de transcription : seulement si VOIX=1.
     {
       name: 'voix',
@@ -35,6 +35,46 @@ export default defineConfig({
         launchOptions: {
           ...(executablePath ? { executablePath } : {}),
           args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-b017.wav')}%noloop`, ...(executablePath ? ['--no-sandbox'] : [])],
+        },
+        ...(executablePath ? { channel: undefined } : {}),
+      },
+    },
+    // Conversation en direct avec un faux microphone et de vrais appels à l'API Live : seulement si DIRECT=1.
+    {
+      name: 'direct',
+      testMatch: /direct\.spec/,
+      use: {
+        ...devices['Desktop Chrome'],
+        permissions: ['microphone'],
+        launchOptions: {
+          ...(executablePath ? { executablePath } : {}),
+          args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-b017.wav')}%noloop`, ...(executablePath ? ['--no-sandbox'] : [])],
+        },
+        ...(executablePath ? { channel: undefined } : {}),
+      },
+    },
+    {
+      name: 'direct-question',
+      testMatch: /direct-question\.spec/,
+      use: {
+        ...devices['Desktop Chrome'],
+        permissions: ['microphone'],
+        launchOptions: {
+          ...(executablePath ? { executablePath } : {}),
+          args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/question-changements.wav')}%noloop`, ...(executablePath ? ['--no-sandbox'] : [])],
+        },
+        ...(executablePath ? { channel: undefined } : {}),
+      },
+    },
+    {
+      name: 'direct-confirme',
+      testMatch: /direct-confirme\.spec/,
+      use: {
+        ...devices['Desktop Chrome'],
+        permissions: ['microphone'],
+        launchOptions: {
+          ...(executablePath ? { executablePath } : {}),
+          args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(dirname(fileURLToPath(import.meta.url)), 'e2e/fixtures/dictee-puis-confirme.wav')}%noloop`, ...(executablePath ? ['--no-sandbox'] : [])],
         },
         ...(executablePath ? { channel: undefined } : {}),
       },
@@ -53,7 +93,8 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 60_000,
       // ASSISTANT_AI=off : les tests ne dépendent jamais d'un service d'IA externe (lecture directe des données).
-      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: process.env.CAPTURE_AI === 'on' || process.env.VOIX === '1' ? 'on' : 'off' },
+      // La conversation en direct n'est ouverte que pour direct.spec.ts : les autres parcours gardent la dictée.
+      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: process.env.CAPTURE_AI === 'on' || process.env.VOIX === '1' || process.env.DIRECT === '1' ? 'on' : 'off', ...(process.env.DIRECT === '1' ? {} : { GEMINI_LIVE_MODEL: '' }) },
     },
     ...(process.platform === 'win32'
       ? []

@@ -152,6 +152,7 @@
   .v-mic-big:disabled { background: #7d8f88; box-shadow: none; cursor: not-allowed; }
   .v-mic-big[data-busy="true"] { background: var(--color-encre-2); }
   .v-mic-big[data-recording="true"] { background: var(--color-danger); box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-danger) 20%, transparent); }
+  .v-mic-big[data-speaking="true"] { background: var(--color-laterite); box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-laterite) 20%, transparent); }
   .v-mic-stop { width: 28px; height: 28px; border-radius: 5px; background: #fff; }
   .v-big-ok, .v-big-no { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 64px; padding: 0 26px; border-radius: 8px; font-size: 19px; font-weight: 700; cursor: pointer; }
   .v-big-ok { flex: 1 1 200px; border: 2px solid var(--color-paturage); background: var(--color-paturage); color: #fff; }

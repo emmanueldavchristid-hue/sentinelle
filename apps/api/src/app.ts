@@ -34,6 +34,7 @@ import { registerImport } from './import.js';
 import { registerFarm } from './farm.js';
 import { registerBeacons } from './beacons.js';
 import { type AssistantOptions, registerAssistant } from './assistant.js';
+import { registerLive } from './live.js';
 import { type StructuringProvider, type SummaryProvider, registerAssist, structuringFromLlm, summaryFromLlm } from './assist.js';
 import type { LlmClient } from './llm.js';
 
@@ -208,7 +209,8 @@ export async function buildApp(opts: AppOptions) {
   registerImport(ctx);
   const farm = registerFarm(ctx);
   registerBeacons(ctx);
-  const assistant = registerAssistant(ctx, farm, opts.assistant ?? { model: null });
+  const live = registerLive(ctx, farm, opts.assistant?.live ?? null);
+  const assistant = registerAssistant(ctx, farm, { ...(opts.assistant ?? { model: null }), liveStatus: live.status });
   const llm = opts.llm ?? null;
   const assist = registerAssist(
     { ...ctx, getInvestigation },

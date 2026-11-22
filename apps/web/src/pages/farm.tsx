@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { beaconName, type AnimalData, type AssistantReply, type BeaconsData, type ChangesData, type ObservationDraftData, type SiteSummary, type SituationData, type ToolResult } from '@sentinelle/contracts';
+import { beaconName, draftFingerprint, isSpokenCancellation, normalizeSpoken, spokenConfirmation, type AnimalData, type AssistantReply, type BeaconsData, type ChangesData, type LiveServerMessage, type ObservationDraftData, type SiteSummary, type SituationData, type ToolResult } from '@sentinelle/contracts';
 import { api, ApiFailure, errorMessage, NetworkError } from '../api';
 import { enqueueObservation } from '../local';
 import { formatTemporal, type TemporalValue } from '@sentinelle/domain';
@@ -7,6 +7,7 @@ import { go, useApp } from '../state';
 import { BeaconAlert, BeaconsPanel } from '../farm/Beacons';
 import { Constellation } from '../farm/Constellation';
 import { Zone } from '../farm/Zone';
+import { LiveTalk, type LiveHandle } from '../farm/Live';
 import { canSpeak, Dictation, playSpeech, stopSpeech, voiceRepliesPref, type MicPhase, type VoiceVia } from '../farm/Voice';
 import { DraftCard, describeDraft, EvidenceDialog, fmtInstant, fmtState, PlainAnswer, plainSentence, ResultView, SimpleDraft, SourceChip, Timeline, type DraftValues } from '../farm/parts';
 import { conversation, display, draftOf, firstResult, refsOf, resultDigest, resultKey, resultSummary, session as farmSession, useDetailed, useExchanges, useFresh, useWrites, type Exchange } from '../farm/store';
@@ -97,18 +98,23 @@ function spokenText(reply: AssistantReply | null, sites: { id: string; name: str
 
 const newExchange = (question: string): Exchange => ({ id: crypto.randomUUID(), question, askedAt: new Date().toISOString(), pending: true, error: null, offline: false, reply: null, key: null, update: null, compared: null, draft: null, receipt: null });
 
-/** Mots qui valent confirmation ou abandon d'un brouillon déjà lu à l'utilisateur, dits ou écrits (phrase courte uniquement). */
-const normalize = (t: string) =>
-  t
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[’']/g, ' ')
-    .replace(/[.!?,;:«»"]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-const CONFIRM_WORDS = /^(oui|ouais|je confirme|confirme|confirmer|c est bon|c est exact|c est ca|exact|d accord|ok|okay|valide|je valide|enregistre)( |$)/;
-const CANCEL_WORDS = /^(non|annule|annuler|j annule|abandonne|laisse tomber)( |$)/;
+/** Ce qu'a donné la confirmation d'un brouillon : reçu du serveur, gardé sur l'appareil, refusé, ou brouillon incomplet. */
+type ConfirmOutcome = 'RECEIVED' | 'QUEUED' | 'FAILED' | 'INVALID';
+/** Conversation en direct : comment la réponse a été produite. Toujours affiché avec la réponse. */
+const LIVE_NOTICE = 'Réponse dite en direct par l’IA. Le texte affiché est la transcription automatique de sa voix : il n’a pas été contrôlé avant d’être entendu. Les lectures ci-dessous sont les données consultées pendant cet échange : ce sont elles qui font foi.';
+const LIVE_UNGROUNDED = 'Réponse dite en direct par l’IA sans lecture des données de l’exploitation : à prendre comme une suggestion, pas comme un fait.';
+const LIVE_ACTION = 'Action faite sur le brouillon pendant cet échange : son état (reçu du serveur, abandon) est affiché sur le brouillon lui-même.';
+interface LiveTurn {
+  id: string;
+  heard: string;
+  said: string;
+  results: ToolResult[];
+  acted: boolean;
+  /** Identifiant donné par le serveur au brouillon préparé pendant ce tour : une confirmation à la voix le vise, lui et pas un autre. */
+  draftId: string | null;
+}
+/** Un brouillon lu ne se confirme à la voix que pendant ce délai ; au-delà, il reste le bouton. */
+const VOICE_CONFIRM_MAX_MS = 5 * 60_000;
 /** Mode discussion : la session s'arrête d'elle-même après cette durée ou ce nombre d'échanges. */
 const DISCUSSION_MAX_MS = 3 * 60_000;
 const DISCUSSION_MAX_TURNS = 12;
@@ -174,7 +180,7 @@ function ExchangeView({
         <span className="v-nature-glyph" aria-hidden="true">
           ✎
         </span>
-        {reply.ungrounded ? 'Suggestion formulée par l’IA' : `Formulé par l’IA · ${reply.provider}`}
+        {reply.ungrounded ? (reply.live ? 'Suggestion dite en direct par l’IA' : 'Suggestion formulée par l’IA') : reply.live ? `Dit en direct par l’IA (transcription automatique) · ${reply.provider}` : `Formulé par l’IA · ${reply.provider}`}
       </span>
       <p className="max-w-[64ch] text-[16px] leading-[1.5] whitespace-pre-line">
         {/* Les identifiants cités par le modèle deviennent des sources cliquables (ils ont été contrôlés par le serveur). */}
@@ -309,6 +315,7 @@ function ExchangeView({
           )}
           {/* Ce qui touche à la vérité de la réponse reste visible même en affichage simple. */}
           {(reply.ungrounded || (others.length === 0 && !draft)) && <p className="v-notice">{reply.notice}</p>}
+          {reply.live && !reply.ungrounded && others.length > 0 && <p className="v-meta">Dit en direct par l’IA (transcription automatique). Les données lues sont dans « Détails et preuves ».</p>}
           {draft && draftOpen && (draft.data.ready && !editing ? <SimpleDraft draft={draft.data} sites={sites} busy={ex.draft === 'saving'} onConfirm={onConfirm} onDiscard={onDiscard} onEdit={() => setEditing(true)} /> : form)}
           {ex.draft === 'discarded' && <p className="v-notice">Brouillon abandonné. Rien n’a été enregistré.</p>}
           {receiptBlocks}
@@ -402,7 +409,9 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
   // Les fonctions asynchrones lisent toujours la préférence et la voix courantes.
   const voice = useRef({ on: voiceReplies, say });
   voice.current = { on: voiceReplies, say };
-  const autoSay = (id: string, said: string) => voice.current.on && voice.current.say(id, said);
+  /** Vrai tant qu'une conversation en direct est ouverte : la voix de synthèse se tait, l'assistant parle déjà. */
+  const liveOn = useRef(false);
+  const autoSay = (id: string, said: string) => !liveOn.current && voice.current.on && voice.current.say(id, said);
   // Une balise qui sort de sa zone est aussi annoncée à voix haute, une fois, si les réponses vocales sont activées.
   const alertKey = (beacons.data?.data.alerts ?? []).join(',');
   const lastAlert = useRef('');
@@ -484,8 +493,8 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
   }, [session, animalId]);
 
   const confirmDraft = useCallback(
-    async (ex: Exchange, v: DraftValues) => {
-      if (!db) return;
+    async (ex: Exchange, v: DraftValues): Promise<ConfirmOutcome> => {
+      if (!db) return 'INVALID';
       conversation.patch(ex.id, { draft: 'saving' });
       setDraftErrors((d) => ({ ...d, [ex.id]: {} }));
       let values = v;
@@ -496,14 +505,14 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
         if (!d.ready || !d.animal.value || !d.site.value || !d.eventTime.value || !d.note.value) {
           setDraftErrors((x) => ({ ...x, [ex.id]: { ...(d.animal.value ? {} : { animal: d.animal.message ?? 'Animal à préciser' }), ...(d.site.value ? {} : { site: d.site.message ?? 'Lieu à préciser' }), ...(d.eventTime.value ? {} : { eventTime: d.eventTime.message ?? 'Date à préciser' }), ...(d.note.value ? {} : { note: d.note.message ?? 'Texte à compléter' }) } }));
           conversation.patch(ex.id, { draft: 'open' });
-          return;
+          return 'INVALID';
         }
         values = { animalId: d.animal.value, locationId: d.site.value, eventTime: d.eventTime.value, note: d.note.value };
       } catch (e) {
         if (!(e instanceof NetworkError)) {
           setDraftErrors((x) => ({ ...x, [ex.id]: { note: errorMessage(e) } }));
           conversation.patch(ex.id, { draft: 'open' });
-          return;
+          return 'INVALID';
         }
       }
       const item = await enqueueObservation(db, values);
@@ -516,12 +525,15 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
         autoSay(ex.id, 'Observation enregistrée. Le serveur a confirmé la réception.');
         conversation.patch(ex.id, { draft: 'confirmed', receipt: { state: 'RECEIVED', ref, receivedAt: saved.receivedAt, duplicate: false, message: label } });
         farmSession.markWritten(ref);
+        return 'RECEIVED';
       } else if (saved?.state === 'FAILED' && saved.permanent) {
         autoSay(ex.id, 'Le serveur a refusé l’enregistrement. Rien n’a été écrit.');
         conversation.patch(ex.id, { draft: 'open', receipt: { state: 'FAILED', ref, receivedAt: null, duplicate: false, message: saved.lastError ?? 'Refusée par le serveur' } });
+        return 'FAILED';
       } else {
         autoSay(ex.id, 'Observation gardée sur cet appareil. Le serveur n’a pas encore confirmé la réception.');
         conversation.patch(ex.id, { draft: 'confirmed', receipt: { state: 'QUEUED', ref, receivedAt: null, duplicate: false, message: label } });
+        return 'QUEUED';
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -535,17 +547,20 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
    */
   const submit = useCallback(
     (raw: string, spoken = false) => {
-      const n = normalize(raw);
-      if (!n) return;
+      if (!normalizeSpoken(raw)) return;
       const open = conversation.get().find((e) => e.draft === 'open' && draftOf(e)?.data.ready);
       const d = open ? draftOf(open)!.data : null;
-      if (open && d && n.length <= 40) {
-        if (CONFIRM_WORDS.test(n) && d.animal.value && d.site.value && d.eventTime.value && d.note.value) {
+      if (open && d) {
+        // « je confirme » vaut pour le brouillon ouvert s'il est récent ; un simple « oui » seulement s'il vient d'être présenté.
+        const kind = spokenConfirmation(raw);
+        const recent = Date.now() - Date.parse(open.askedAt) <= VOICE_CONFIRM_MAX_MS;
+        const justShown = conversation.get()[0]?.id === open.id;
+        if (kind && recent && (kind === 'explicit' || justShown) && d.animal.value && d.site.value && d.eventTime.value && d.note.value) {
           setText('');
           void confirmDraft(open, { animalId: d.animal.value, locationId: d.site.value, eventTime: d.eventTime.value, note: d.note.value });
           return;
         }
-        if (CANCEL_WORDS.test(n)) {
+        if (isSpokenCancellation(raw)) {
           setText('');
           conversation.patch(open.id, { draft: 'discarded' });
           autoSay(open.id, 'Brouillon abandonné. Rien n’a été enregistré.');
@@ -581,6 +596,129 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
     }, 500);
     return () => clearTimeout(t);
   }, [discussion, micPhase, busy, speakingId, endDiscussion]);
+
+  // ---------- Conversation en direct : l'assistant écoute et répond à la voix, sans étape de transcription ----------
+  const liveInfo = assistant?.voice?.live;
+  const [livePref, setLivePref] = useState(true);
+  /** La conversation en direct n'a pas pu s'ouvrir : l'écran repasse à la dictée et le dit. */
+  const [liveBroken, setLiveBroken] = useState<string | null>(null);
+  const liveMode = !!liveInfo?.available && livePref && !liveBroken && !offline;
+  const liveHandle = useRef<LiveHandle>(null);
+  const liveTurns = useRef(new Map<number, LiveTurn>());
+  const liveModel = useRef<string | null>(null);
+  liveModel.current = liveInfo?.model ?? null;
+  const confirmRef = useRef(confirmDraft);
+  confirmRef.current = confirmDraft;
+  const onLiveActive = useCallback((on: boolean) => {
+    liveOn.current = on;
+    if (on) {
+      stopSpeech();
+      setSpeakingId(null);
+      setVoiceState(null);
+      liveTurns.current = new Map();
+    } else {
+      // Fin de la conversation : plus rien n'est attendu pour les échanges restés ouverts.
+      for (const t of liveTurns.current.values()) conversation.patch(t.id, { pending: false });
+    }
+  }, []);
+  const onLive = useCallback((m: LiveServerMessage) => {
+    const turns = liveTurns.current;
+    const turnOf = (n: number): LiveTurn => {
+      let t = turns.get(n);
+      if (!t) {
+        const ex = newExchange('…');
+        conversation.add(ex);
+        t = { id: ex.id, heard: '', said: '', results: [], acted: false, draftId: null };
+        turns.set(n, t);
+      }
+      return t;
+    };
+    const lastTurn = () => turnOf(Math.max(1, ...turns.keys()));
+    /** Chaque échange en direct garde ce qui a été entendu, ce qui a été dit, et les lectures de données faites entre les deux. */
+    const show = (t: LiveTurn, done = false) => {
+      const grounded = t.results.length > 0;
+      const has = !!t.said.trim() || grounded || t.acted;
+      const reply: AssistantReply | null =
+        has || done
+          ? {
+              mode: 'ai',
+              provider: `Gemini (${liveModel.current ?? 'conversation en direct'})`,
+              intent: 'ai',
+              text: t.said.trim() || null,
+              notice: grounded ? LIVE_NOTICE : t.acted ? LIVE_ACTION : has ? LIVE_UNGROUNDED : 'L’assistant n’a rien répondu à cette phrase.',
+              results: t.results,
+              ungrounded: !grounded && !t.acted,
+              suggestions: [],
+              live: true,
+            }
+          : null;
+      conversation.patch(t.id, { question: t.heard.trim() || '…', reply, pending: !reply });
+    };
+    /** Le brouillon visé par une confirmation à la voix : celui que le serveur a désigné, encore ouvert, au contenu inchangé. */
+    const draftFor = (draftId: string, fingerprint: string) => {
+      const turnOfDraft = [...turns.values()].find((x) => x.draftId === draftId);
+      const open = turnOfDraft ? conversation.get().find((e) => e.id === turnOfDraft.id && e.draft === 'open') : undefined;
+      const d = open ? draftOf(open)?.data : null;
+      return open && d && d.ready && draftFingerprint(d) === fingerprint && d.animal.value && d.site.value && d.eventTime.value && d.note.value ? { open, values: { animalId: d.animal.value, locationId: d.site.value, eventTime: d.eventTime.value, note: d.note.value } } : null;
+    };
+    switch (m.type) {
+      case 'heard': {
+        const t = turnOf(m.turn);
+        t.heard += m.text;
+        return show(t);
+      }
+      case 'said': {
+        const t = turnOf(m.turn);
+        t.said += m.text;
+        return show(t);
+      }
+      case 'result': {
+        const t = turnOf(m.turn);
+        const r = m.result;
+        t.results = [...t.results, r];
+        if (t.results.length === 1) {
+          // Même question qu'avant, contenu différent : la réponse est signalée « mise à jour », comme pour une question écrite.
+          const key = resultKey(r);
+          const previous = key ? conversation.get().find((e) => e.id !== t.id && e.key === key && firstResult(e)) : undefined;
+          const prev = previous ? firstResult(previous)! : null;
+          conversation.patch(t.id, { key, update: prev && resultDigest(prev) !== resultDigest(r) ? { previousAsOf: prev.asOf, previousSummary: resultSummary(prev), currentSummary: resultSummary(r) } : null });
+        }
+        if (r.tool === 'prepare_observation') {
+          // Un nouveau brouillon remplace celui qui était encore ouvert : un seul attend une confirmation.
+          for (const e of conversation.get()) if (e.id !== t.id && e.draft === 'open') conversation.patch(e.id, { draft: 'discarded' });
+          conversation.patch(t.id, { draft: 'open' });
+          t.draftId = m.draft?.id ?? null;
+        }
+        if (r.tool === 'beacons') setBeaconTick((n) => n + 1);
+        if (r.tool === 'animal') go(`elevage/animal/${encodeURIComponent(String(r.params.animalId))}`);
+        return show(t);
+      }
+      case 'turn_complete': {
+        const t = turns.get(m.turn);
+        return t ? show(t, true) : undefined;
+      }
+      case 'confirm_request': {
+        // La personne a dit « je confirme » (règle fixe vérifiée par le serveur) : le brouillon ouvert suit le chemin habituel
+        // (vérification des champs, file d'envoi, reçu du serveur), et c'est ce reçu qui est rapporté à l'assistant.
+        const target = draftFor(m.draftId, m.fingerprint);
+        if (!target) return liveHandle.current?.send({ type: 'confirm_result', id: m.id, state: 'NO_DRAFT' });
+        const t = lastTurn();
+        t.acted = true;
+        show(t);
+        void confirmRef.current(target.open, target.values).then((state) => liveHandle.current?.send({ type: 'confirm_result', id: m.id, state, receivedAt: conversation.get().find((e) => e.id === target.open.id)?.receipt?.receivedAt ?? null }));
+        return;
+      }
+      case 'draft_cancel': {
+        const open = conversation.get().find((e) => e.draft === 'open');
+        if (open) conversation.patch(open.id, { draft: 'discarded' });
+        const t = lastTurn();
+        t.acted = true;
+        return show(t);
+      }
+      default:
+        return;
+    }
+  }, []);
 
   const onSource = useCallback((ref: string) => setSourceRef(ref), []);
   const timeline = animalId ? (animal.data?.data.timeline ?? []) : (changes.data?.data.events ?? []);
@@ -766,8 +904,39 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
             !assistant?.configured && <p className="v-meta mt-1">Sans assistant vocal sur ce serveur : écrivez votre question, ou touchez une proposition.</p>
           )}
 
-          {/* Parler : un gros bouton, qui s'arrête de lui-même quand on se tait. Indisponible sans assistant : le texte reste complet. */}
-          {(canDictate || detailed) && (
+          {/* Parler en direct : l'assistant répond à la voix dès que la personne a fini. Sinon, dictée d'une phrase à la fois. */}
+          {liveMode && (
+            <div className="mt-4">
+              <LiveTalk session={session} animalId={animalId} offline={offline} maxSeconds={liveInfo!.maxSeconds} quiet={!detailed} handle={liveHandle} onMessage={onLive} onActive={onLiveActive} onFailedToOpen={setLiveBroken} />
+              {detailed && (
+                <p className="mt-2 flex flex-wrap items-center gap-2">
+                  <button type="button" className="v-chip" aria-pressed={true} onClick={() => setLivePref(false)}>
+                    Conversation en direct : oui
+                  </button>
+                  <span className="v-meta">
+                    Modèle {liveInfo!.model}. La voix répond sans attendre : ses phrases ne peuvent pas être contrôlées avant d’être dites. Les lectures de données faites pendant l’échange s’affichent avec la réponse.
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+          {!liveMode && liveInfo?.available && !offline && (
+            <p className="mt-4 flex flex-wrap items-center gap-2" role="status">
+              <button
+                type="button"
+                className="v-chip"
+                aria-pressed={false}
+                onClick={() => {
+                  setLiveBroken(null);
+                  setLivePref(true);
+                }}
+              >
+                Conversation en direct : non
+              </button>
+              {liveBroken && <span className="text-[14px] text-danger">{liveBroken} Le bouton ci-dessous dicte une phrase à la fois.</span>}
+            </p>
+          )}
+          {!liveMode && (canDictate || detailed) && (
             <div className="mt-4">
               <Dictation
                 key={micKey}
@@ -901,8 +1070,11 @@ export function FarmHome({ animalId }: { animalId: string | null }) {
                 onAsk={(q) => ask(q)}
                 onSource={onSource}
                 onManual={manualDraft}
-                onConfirm={(v) => confirmDraft(ex, v)}
-                onDiscard={() => conversation.patch(ex.id, { draft: 'discarded' })}
+                onConfirm={(v) => void confirmDraft(ex, v).then((state) => liveOn.current && state !== 'INVALID' && liveHandle.current?.send({ type: 'screen', event: state }))}
+                onDiscard={() => {
+                  conversation.patch(ex.id, { draft: 'discarded' });
+                  if (liveOn.current) liveHandle.current?.send({ type: 'screen', event: 'DISCARDED' });
+                }}
               />
             ))}
           </div>

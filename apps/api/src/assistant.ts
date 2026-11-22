@@ -5,6 +5,7 @@ import type { Db, Queryable } from './db.js';
 import type { FarmTools } from './farm.js';
 import { GeminiError, type AssistantModel, type GeminiTool } from './gemini.js';
 import { HttpError, parse, type User } from './http.js';
+import type { LiveOptions } from './live.js';
 
 /**
  * Zone « Parler à mon élevage ».
@@ -114,7 +115,7 @@ Règles non négociables :
 - Pour « pourquoi ta réponse a changé », appelle compare_states avec les deux états (asOf) des réponses précédentes.
 - Réponds en français clair, en phrases courtes, sans tiret cadratin, en 6 phrases au plus. Les dates sont à l'heure d'Abidjan (UTC).`;
 
-const TOOL_DECLARATIONS: GeminiTool[] = [
+export const TOOL_DECLARATIONS: GeminiTool[] = [
   { name: 'get_situation', description: 'Situation enregistrée de l’exploitation : animaux, sites, changements depuis hier, informations à compléter, dernière réception.', parameters: { type: 'object', properties: {} } },
   {
     name: 'list_changes',
@@ -157,7 +158,7 @@ function forModel(r: ToolResult): Record<string, unknown> {
   return { asOf: r.asOf, period: r.period, statements: r.statements.map((s) => ({ nature: s.nature, text: s.text, sources: s.sources })), limits: r.limits, ...extra };
 }
 
-async function callFarmTool(tools: FarmTools, u: User, input: AskInput, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+export async function callFarmTool(tools: FarmTools, u: User, input: AskInput, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
   switch (name) {
     case 'get_situation':
@@ -204,6 +205,10 @@ export interface AssistantOptions {
   maxToolRounds?: number;
   /** Durée maximale d'une dictée, en secondes. */
   voiceMaxSeconds?: number;
+  /** Conversation en direct (API Live) : absente ou null = indisponible, la dictée et le texte restent. */
+  live?: LiveOptions | null;
+  /** État de la conversation en direct, fourni par `registerLive`. */
+  liveStatus?: () => { available: boolean; model: string | null; maxSeconds: number; idleSeconds: number };
 }
 
 /** WAV PCM 16 bits : 44 octets d'en-tête, puis les échantillons. Renvoie la durée en secondes, ou null si ce n'est pas un WAV lisible. */
@@ -221,7 +226,7 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
   const used = new Map<string, number>();
 
   const voiceMaxSeconds = opts.voiceMaxSeconds ?? 30;
-  const voice = () => ({ available: !!opts.model?.transcribe, maxSeconds: voiceMaxSeconds, speech: !!opts.model?.speak });
+  const voice = () => ({ available: !!opts.model?.transcribe, maxSeconds: voiceMaxSeconds, speech: !!opts.model?.speak, ...(opts.liveStatus ? { live: opts.liveStatus() } : {}) });
   /** Compteur des réponses parlées par utilisateur (limite de consommation, distincte des questions). */
   const spoken = new Map<string, number>();
   const status = (): AssistantStatus =>

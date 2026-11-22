@@ -53,7 +53,14 @@ export const config = {
   geminiTtsModel: (process.env.GEMINI_TTS_MODEL ?? '').trim(),
   /** Voix préconstruite du modèle de synthèse (par exemple Kore). */
   geminiTtsVoice: (process.env.GEMINI_TTS_VOICE ?? '').trim() || 'Kore',
+  /** Modèle de conversation en direct (API Live), par exemple gemini-3.8-live. Vide = conversation en direct indisponible. */
   geminiLiveModel: (process.env.GEMINI_LIVE_MODEL ?? '').trim(),
+  /** Durée maximale d'une conversation en direct, silence qui la ferme, et silence qui marque la fin d'une prise de parole. */
+  liveMaxSessionSeconds: int(process.env.LIVE_MAX_SESSION_SECONDS, 300, 30, 540),
+  liveIdleSeconds: int(process.env.LIVE_IDLE_SECONDS, 30, 10, 120),
+  liveSilenceMs: int(process.env.LIVE_SILENCE_MS, 700, 300, 2000),
+  /** Durée cumulée des conversations en direct depuis le démarrage du serveur : borne la dépense, même si le lien public circule. */
+  liveMaxTotalSeconds: int(process.env.LIVE_MAX_TOTAL_SECONDS, 3600, 60, 86_400),
   assistantTimeoutMs: int(process.env.ASSISTANT_TIMEOUT_MS, 20_000, 2_000, 120_000),
   assistantMaxRequestsPerSession: int(process.env.ASSISTANT_MAX_REQUESTS_PER_SESSION, 40, 1, 1000),
   assistantMaxToolRounds: int(process.env.ASSISTANT_MAX_TOOL_ROUNDS, 4, 1, 8),

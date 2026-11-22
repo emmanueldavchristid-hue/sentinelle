@@ -240,7 +240,97 @@ export interface AssistantStatus {
   /** Pourquoi l'assistant IA n'est pas disponible, en clair. */
   reason: string | null;
   /** Dictée : le serveur peut-il transcrire un enregistrement, et quelle durée maximale accepte-t-il ? */
-  voice?: { available: boolean; maxSeconds: number; /** Le serveur sait-il produire une réponse parlée (synthèse vocale) ? */ speech?: boolean };
+  voice?: {
+    available: boolean;
+    maxSeconds: number;
+    /** Le serveur sait-il produire une réponse parlée (synthèse vocale) ? */
+    speech?: boolean;
+    /** Conversation en direct : le modèle écoute et répond à la voix, sans étape de transcription. */
+    live?: { available: boolean; model: string | null; maxSeconds: number; idleSeconds: number };
+  };
+}
+
+/**
+ * Conversation en direct (WebSocket /api/assistant/live). Le navigateur envoie le son du micro en trames binaires
+ * (PCM 16 bits mono 16 kHz) et reçoit la voix du modèle en trames binaires (PCM 16 bits mono 24 kHz). Les messages
+ * ci-dessous voyagent en trames texte (JSON). Aucun son n'est conservé par le serveur.
+ */
+export type LiveClientMessage =
+  | { type: 'start'; demoUser?: string; contextAnimalId?: string; contextIncidentId?: string }
+  | { type: 'stop' }
+  /** Réponse à `confirm_request` : ce que le chemin d'écriture habituel (brouillon, file d'envoi, reçu) a donné. */
+  | { type: 'confirm_result'; id: string; state: 'RECEIVED' | 'QUEUED' | 'FAILED' | 'INVALID' | 'NO_DRAFT'; receivedAt?: string | null }
+  /** L'utilisateur a agi à l'écran pendant la conversation (bouton vert, croix) : le modèle en est informé. */
+  | { type: 'screen'; event: 'RECEIVED' | 'QUEUED' | 'FAILED' | 'DISCARDED' };
+
+export type LiveEndReason = 'stopped' | 'silence' | 'limit' | 'upstream' | 'auth' | 'unavailable' | 'error';
+export type LiveServerMessage =
+  | { type: 'ready'; model: string; maxSeconds: number; idleSeconds: number }
+  /** Fragment de ce que le modèle a entendu (transcription automatique), pour le tour `turn`. */
+  | { type: 'heard'; turn: number; text: string }
+  /** Fragment de ce que le modèle a dit (transcription automatique de sa voix). */
+  | { type: 'said'; turn: number; text: string }
+  /** Lecture des données faite pendant ce tour : c'est la preuve affichée à l'écran. */
+  | { type: 'result'; turn: number; result: ToolResult; /** Brouillon prêt : son identifiant et l'empreinte de son contenu, auxquels une confirmation à la voix sera liée. */ draft?: { id: string; fingerprint: string; expiresAt: string } }
+  | { type: 'turn_complete'; turn: number }
+  /** L'utilisateur a repris la parole : la lecture en cours doit s'arrêter. */
+  | { type: 'interrupted' }
+  /** L'utilisateur a confirmé à la voix : l'écran doit enregistrer le brouillon ouvert par le chemin habituel. */
+  | { type: 'confirm_request'; id: string; draftId: string; fingerprint: string }
+  | { type: 'draft_cancel' }
+  | { type: 'notice'; text: string }
+  | { type: 'end'; reason: LiveEndReason; message: string };
+
+/** Phrase dite ou écrite, ramenée à une forme comparable (minuscules, sans accents ni ponctuation). */
+export function normalizeSpoken(t: string): string {
+  return t
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[’']/g, ' ')
+    .replace(/[.!?,;:«»"]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+/** Confirmation dite en toutes lettres. */
+const EXPLICIT = ['oui je confirme', 'je confirme', 'confirme', 'je valide', 'valide', 'enregistre'];
+/** Accord bref : ne vaut confirmation que juste après la lecture du brouillon. */
+const SHORT = ['c est exact', 'c est bon', 'c est ca', 'd accord', 'ouais', 'okay', 'exact', 'oui', 'ok'];
+/** Mots de politesse admis autour d'une confirmation, sans valeur seuls. */
+const FILLER = ['s il vous plait', 's il te plait', 'tout a fait', 'tres bien', 'parfait', 'merci', 'vas y', 'allez'];
+const CANCEL_WORDS = /^(non|annule|annuler|j annule|abandonne|laisse tomber)( |$)/;
+/**
+ * Une phrase vaut-elle confirmation d'un brouillon ? Règle fixe, sans IA. La phrase ENTIÈRE doit être faite d'expressions de
+ * confirmation : « je ne confirme pas », « tu as dit je confirme », « oui mais change le lieu » ou « explique ce que veut
+ * dire confirmer » ne sont donc pas des confirmations. Renvoie « explicit » (« je confirme »), « short » (« oui », « d'accord » :
+ * à n'accepter que juste après la lecture du brouillon) ou null.
+ */
+export function spokenConfirmation(t: string): 'explicit' | 'short' | null {
+  let rest = normalizeSpoken(t);
+  if (!rest || rest.length > 40) return null;
+  let kind: 'explicit' | 'short' | null = null;
+  const take = (words: string[]) => {
+    const w = words.find((x) => rest === x || rest.startsWith(`${x} `));
+    if (w === undefined) return false;
+    rest = rest.slice(w.length).trim();
+    return true;
+  };
+  while (rest) {
+    if (take(EXPLICIT)) kind = 'explicit';
+    else if (take(SHORT)) kind ??= 'short';
+    else if (!take(FILLER)) return null;
+  }
+  return kind;
+}
+export const isSpokenConfirmation = (t: string): boolean => spokenConfirmation(t) !== null;
+/** Empreinte du contenu d'un brouillon : une confirmation vaut pour ce contenu précis, pas pour un autre. */
+export function draftFingerprint(d: ObservationDraftData): string {
+  return JSON.stringify([d.animal.value, d.site.value, d.eventTime.value, d.note.value]);
+}
+/** Vrai si la phrase, courte, vaut abandon d'un brouillon (« non », « annule »). */
+export function isSpokenCancellation(t: string): boolean {
+  const n = normalizeSpoken(t);
+  return n.length > 0 && n.length <= 40 && CANCEL_WORDS.test(n);
 }
 
 /** Résultat d'une dictée : le texte transcrit, à vérifier par l'utilisateur avant envoi. L'audio n'est pas conservé. */
@@ -267,6 +357,8 @@ export interface AssistantReply {
   /** Vrai si le texte de l'IA ne s'appuie sur aucune lecture de données : à présenter comme une suggestion. */
   ungrounded: boolean;
   suggestions: string[];
+  /** Conversation en direct : `text` est la transcription automatique de ce que le modèle a dit à voix haute. */
+  live?: boolean;
 }
 
 /**

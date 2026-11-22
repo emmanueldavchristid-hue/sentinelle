@@ -21,6 +21,10 @@ const app = await buildApp({
     maxRequestsPerSession: config.assistantMaxRequestsPerSession,
     maxToolRounds: config.assistantMaxToolRounds,
     voiceMaxSeconds: config.voiceMaxSessionSeconds,
+    live:
+      assistantCheck.ready && config.geminiLiveModel
+        ? { apiKey: config.geminiApiKey, model: config.geminiLiveModel, voice: config.geminiTtsVoice, maxSeconds: config.liveMaxSessionSeconds, idleSeconds: config.liveIdleSeconds, silenceMs: config.liveSilenceMs, maxTotalSeconds: config.liveMaxTotalSeconds }
+        : null,
   },
   db,
   demoMode: config.demoMode,
@@ -36,6 +40,7 @@ console.log(`  base : ${db.mode}${db.mode === 'pglite-file' ? ` (${config.dataDi
 console.log(`  IA : ${llm ? `activée — ${llm.name}` : 'désactivée (aucun fournisseur configuré)'}`);
 console.log(`  configuration : ${envFileLoaded ? `fichier ${envFile} chargé` : `aucun fichier .env (${envFile}), valeurs par défaut`}`);
 for (const m of assistantCheck.messages) console.log(`  assistant : ${m}`);
+console.log(`  conversation en direct : ${assistantCheck.ready && config.geminiLiveModel ? `modèle ${config.geminiLiveModel}, ${config.liveMaxSessionSeconds} s au plus` : 'indisponible (GEMINI_LIVE_MODEL non renseigné, ou assistant non configuré)'}`);
 console.log(`  mode démonstration : ${config.demoMode ? 'activé (sélecteur de rôle, pas d’authentification sécurisée)' : 'désactivé — connexion par identifiant et mot de passe'}`);
 
 const stop = async () => {
