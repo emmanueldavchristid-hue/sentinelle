@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { beaconName, BEACON_STATUS_LABELS, type Beacon, type BeaconsData, type IncidentSummary, type ToolResult } from '@sentinelle/contracts';
+import { beaconName, bearingOf, BEACON_STATUS_LABELS, type Beacon, type BeaconsData, type IncidentSummary, type ToolResult } from '@sentinelle/contracts';
 import { api, ApiFailure, errorMessage, type Session } from '../api';
 import { fmtState, SourceChip } from './parts';
 
@@ -152,7 +152,8 @@ export function BeaconAlert({
                   , associée à <b className="num">{b.animalId}</b>,
                 </>
               ) : null}{' '}
-              est à <b>{b.latest?.distanceM === null || !b.latest ? '?' : Math.round(b.latest.distanceM)} m</b> du repère, pour un seuil de {b.radiusM} m
+              est à <b>{b.latest?.distanceM === null || !b.latest ? '?' : Math.round(b.latest.distanceM)} m</b> du repère
+              {bearingOf(b.latest?.eastM, b.latest?.northM, b.latest?.accuracyM) ? `, vers le ${bearingOf(b.latest?.eastM, b.latest?.northM, b.latest?.accuracyM)}` : ''}, pour un seuil de {b.radiusM} m
               {b.outsideSince ? (
                 <>
                   , depuis <span className="num">{fmtState(b.outsideSince).slice(11)}</span>

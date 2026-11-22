@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AssistantReply, Beacon, BeaconsData, IncidentData, SituationData, SourceData, ToolResult } from '@sentinelle/contracts';
+import { bearingOf, type AssistantReply, type Beacon, type BeaconsData, type IncidentData, type SituationData, type SourceData, type ToolResult } from '@sentinelle/contracts';
 import { buildApp } from '../src/app.js';
 import { recognize } from '../src/assistant.js';
 import { zoneOf } from '../src/beacons.js';
@@ -277,5 +277,68 @@ describe('Incident d’éloignement : un par épisode, avec ses faits, relu avec
     expect(r.data.closeReason).toBe('DEVICE_STOPPED');
     expect(text(r)).toMatch(/la balise a été arrêtée/);
     expect((await list()).data.incidents!.every((i) => i.closedAt !== null)).toBe(true);
+  });
+});
+
+describe('Suivi GPS : position relative au repère, trajectoire, direction', () => {
+  it('direction dite seulement quand elle a un sens', () => {
+    expect(bearingOf(0, 50)).toBe('nord');
+    expect(bearingOf(40, 40)).toBe('nord-est');
+    expect(bearingOf(60, 0)).toBe('est');
+    expect(bearingOf(0, -30)).toBe('sud');
+    expect(bearingOf(-20, 20)).toBe('nord-ouest');
+    // Trop près du repère pour la précision annoncée : on ne dit pas de quel côté.
+    expect(bearingOf(2, 1)).toBeNull();
+    expect(bearingOf(6, 6, 15)).toBeNull();
+    expect(bearingOf(null, null)).toBeNull();
+    expect(bearingOf(undefined, 12)).toBeNull();
+  });
+
+  it('la trajectoire est conservée dans l’ordre, la direction est dite, aucune coordonnée géographique n’existe en base', async () => {
+    await app.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset' }, payload: {} });
+    const { id, token } = (await pair({ label: 'Poulet A', animalId: 'B-071', radiusM: 30 })).json();
+    const step = async (reading: Record<string, unknown>) => {
+      await wait(950);
+      return send(id, token, reading);
+    };
+    expect((await step({ distanceM: 0, accuracyM: 4, eastM: 0, northM: 0 })).statusCode).toBe(201);
+    expect((await step({ distanceM: 14.1, accuracyM: 4, eastM: 10, northM: 10 })).statusCode).toBe(201);
+    expect((await step({ distanceM: 42.4, accuracyM: 4, eastM: 30, northM: 30 })).statusCode).toBe(201);
+    // Une mesure sans position relative (ancienne balise, ou pas de position) n'entre pas dans la trajectoire.
+    expect((await step({ distanceM: null, accuracyM: null })).statusCode).toBe(201);
+    expect((await step({ distanceM: 56.6, accuracyM: 4, eastM: 40, northM: 40 })).statusCode).toBe(201);
+
+    const b = (await list()).data.beacons.find((x) => x.id === id)!;
+    expect(b.status).toBe('OUTSIDE');
+    expect(b.latest).toMatchObject({ eastM: 40, northM: 40, distanceM: expect.closeTo(56.6, 1) });
+    expect(b.track!.map((t) => [t.eastM, t.northM])).toEqual([[0, 0], [10, 10], [30, 30], [40, 40]]);
+    expect(b.track!.at(-1)).toMatchObject({ zone: 'OUTSIDE', source: 'PHONE_GPS' });
+    const r = await list();
+    expect(r.statements.map((x) => x.text).join(' ')).toMatch(/HORS de la zone\. 57 m du repère, vers le nord-est \(précision ± 4 m\)/);
+    expect(r.limits.join(' ')).toMatch(/Aucune coordonnée géographique n’est transmise/);
+    // L'incident ouvert le dit aussi, dans l'état actuel.
+    const inc = (await app.inject({ url: '/api/farm/incidents/latest', headers: FARMER })).json() as ToolResult<IncidentData>;
+    expect(inc.statements.at(-1)!.text).toMatch(/^État actuel\. .*vers le nord-est/);
+    // Le schéma ne prévoit aucune colonne de coordonnées : seules des distances relatives au repère sont gardées.
+    const cols = (await db.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name = 'device_readings'`)).rows.map((c) => c.column_name);
+    expect(cols).toEqual(expect.arrayContaining(['east_m', 'north_m', 'distance_m']));
+    expect(cols.some((c) => /lat|lon|coord/.test(c))).toBe(false);
+  });
+
+  it('position relative incomplète ou incohérente avec la distance : refusée', async () => {
+    const { id, token } = (await pair({ label: 'Poulet B', radiusM: 30 })).json();
+    await wait(950);
+    expect((await send(id, token, { distanceM: 20, accuracyM: 4, eastM: 20 })).statusCode).toBe(400);
+    await wait(950);
+    // 20 m annoncés, mais une position relative à 71 m du repère : l'une des deux valeurs est fausse.
+    const bad = await send(id, token, { distanceM: 20, accuracyM: 4, eastM: 50, northM: 50 });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().fields.eastM).toMatch(/incohérente avec la distance/);
+    await wait(950);
+    expect((await send(id, token, { source: 'SIMULATED', distanceM: 20, accuracyM: null, eastM: 20, northM: 0 })).statusCode).toBe(201);
+    const b = (await list()).data.beacons.find((x) => x.id === id)!;
+    expect(b.track).toHaveLength(1);
+    expect(b.track![0]).toMatchObject({ source: 'SIMULATED', eastM: 20, northM: 0 });
+    expect((await list()).data.simulated).toBe(true);
   });
 });

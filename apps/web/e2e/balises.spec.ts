@@ -40,13 +40,24 @@ test('balise : association, repère, éloignement, alerte, incident compris avec
   expect(await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 
   // L'écran de l'éleveur suit la balise, sans alerte tant qu'elle est dans la zone. La vue « zone » la place à sa distance.
-  await expect(page.getByRole('region', { name: 'Zone autour du repère' })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('region', { name: 'Zone autour du repère' })).toContainText('La direction n’est pas mesurée');
+  // Suivi GPS : le téléphone transmet sa position par rapport au repère, la carte montre donc de vraies directions.
+  const map = page.getByRole('region', { name: 'Suivi GPS autour du repère' });
+  await expect(map).toBeVisible({ timeout: 15_000 });
+  await expect(map).toContainText('Le nord est en haut');
+  await expect(map).toContainText('Aucune coordonnée géographique n’est transmise');
   await expect(panel).toContainText('Dans la zone', { timeout: 15_000 });
   await expect(panel).toContainText('GPS du téléphone');
   await expect(page.getByRole('alert').filter({ hasText: 'hors de sa zone' })).toHaveCount(0);
 
   // Le téléphone s'éloigne d'environ 100 m : alerte dans l'application.
+  // Il part en trois étapes (un peu vers l'est, puis plein nord) : la trajectoire reçue se dessine point par point.
+  for (const [dLat, dLon] of [
+    [0.0003, 0.0002],
+    [0.0006, 0.0002],
+  ] as const) {
+    await phoneCtx.setGeolocation({ latitude: home.latitude + dLat, longitude: home.longitude + dLon, accuracy: 5 });
+    await phone.waitForTimeout(3600);
+  }
   await phoneCtx.setGeolocation({ latitude: home.latitude + 0.0009, longitude: home.longitude, accuracy: 5 });
   await expect(phone.getByRole('region', { name: 'État enregistré par le serveur' })).toContainText('Hors de la zone', { timeout: 20_000 });
   const alert = page.getByRole('alert').filter({ hasText: 'hors de sa zone' });
@@ -54,6 +65,18 @@ test('balise : association, repère, éloignement, alerte, incident compris avec
   await expect(alert).toContainText(id);
   await expect(alert).toContainText('associée à B-071');
   await expect(alert).toContainText('pour un seuil de 30 m');
+  // Le téléphone est parti vers le nord (latitude croissante) : la direction est dite, et la trajectoire est tracée.
+  await expect(alert).toContainText('vers le nord');
+  await expect(map).toContainText(/100 m au nord/);
+  await expect.poll(async () => await map.locator('polyline').count(), { timeout: 15_000 }).toBeGreaterThan(0);
+  const track = (await (await page.request.get('/api/farm/devices', { headers: { 'x-demo-user': 'U-ELEVEUR' } })).json()).data.beacons[0].track as { eastM: number; northM: number }[];
+  expect(track.length).toBeGreaterThan(1);
+  expect(Math.abs(track.at(-1)!.eastM)).toBeLessThan(3);
+  expect(track.at(-1)!.northM).toBeGreaterThan(95);
+  // Les étapes intermédiaires sont dans la trajectoire : un passage à une vingtaine de mètres vers l'est.
+  expect(track.some((t) => t.eastM > 15 && t.northM > 25 && t.northM < 80)).toBe(true);
+  await map.scrollIntoViewIfNeeded();
+  await map.screenshot({ path: 'test-results/suivi-gps.png' });
   await expect(alert).toContainText('La balise mesure sa propre distance, pas la position de l’animal');
   await page.screenshot({ path: 'test-results/balise-alerte.png' });
   await phone.screenshot({ path: 'test-results/balise-telephone.png', fullPage: true });

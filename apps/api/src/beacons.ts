@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { formatInstant } from '@sentinelle/domain';
-import { DEFAULT_BEACON_LABEL, type Beacon, type BeaconReading, type BeaconsData, type IncidentData, type IncidentSummary, type SourceData, type Statement, type ToolResult, type ZoneState } from '@sentinelle/contracts';
+import { bearingOf, DEFAULT_BEACON_LABEL, type Beacon, type BeaconReading, type BeaconsData, type IncidentData, type IncidentSummary, type SourceData, type Statement, type ToolResult, type TrackPoint, type ZoneState } from '@sentinelle/contracts';
 import type { Db, Queryable } from './db.js';
 import { HttpError, parse, sha256, type User } from './http.js';
 import { incidentMail, MailError, maskEmail, type AlertNotifier } from './notify.js';
@@ -18,7 +18,8 @@ import { incidentMail, MailError, maskEmail, type AlertNotifier } from './notify
  * - la source de chaque mesure (GPS du téléphone, ou distance SIMULÉE à la main) est stockée et affichée dans chaque preuve ;
  * - « hors zone » n'est dit que si la distance dépasse le seuil même en tenant compte de la précision ; sinon « incertain » ;
  * - une balise muette n'est pas « sortie » : on dit seulement depuis quand rien n'a été reçu ;
- * - aucune coordonnée géographique n'est transmise ni stockée ;
+ * - aucune coordonnée géographique n'est transmise ni stockée. Le suivi GPS repose sur la position RELATIVE au repère
+ *   (mètres vers l'est et le nord), calculée par le téléphone : on connaît la trajectoire autour du repère, pas le lieu ;
  * - aucune notification externe par défaut. Si l'e-mail d'alerte est activé côté serveur (voir notify.ts), UN message part par
  *   épisode, vers un destinataire de test fixé côté serveur, et son statut réel est gardé avec l'incident ;
  * - la distance est calculée par le téléphone (son GPS, un repère fixé par l'utilisateur) : ce n'est pas une mesure radio
@@ -29,6 +30,8 @@ export const OUTSIDE_RULE = 'Hors de la zone si la distance mesurée dépasse le
 
 export const SILENT_AFTER_SECONDS = 20;
 const KEEP_READINGS = 300;
+/** Nombre de points de trajectoire renvoyés (une mesure toutes les 3 secondes : environ 6 minutes). */
+const TRACK_POINTS = 120;
 const iso = (v: unknown): string => (v instanceof Date ? v : new Date(String(v))).toISOString();
 const fmtSec = (s: string) => `${formatInstant(Date.parse(s))}:${s.slice(17, 19)}`;
 const meters = (n: number) => `${Math.round(n)} m`;
@@ -54,6 +57,9 @@ export const ReadingSchema = z.object({
   observedAt: z.iso.datetime({ offset: true }),
   distanceM: z.number().min(0).max(100_000).nullable(),
   accuracyM: z.number().min(0).max(100_000).nullable(),
+  /** Suivi GPS : position relative au repère, en mètres vers l'est et vers le nord. Facultatif (anciennes balises : distance seule). */
+  eastM: z.number().min(-100_000).max(100_000).nullable().optional(),
+  northM: z.number().min(-100_000).max(100_000).nullable().optional(),
 });
 
 interface DeviceRow {
@@ -73,10 +79,12 @@ const readingOf = (r: Record<string, unknown>): BeaconReading => ({
   distanceM: r.distance_m === null ? null : Number(r.distance_m),
   accuracyM: r.accuracy_m === null ? null : Number(r.accuracy_m),
   zone: r.zone as ZoneState,
+  eastM: r.east_m === null || r.east_m === undefined ? null : Number(r.east_m),
+  northM: r.north_m === null || r.north_m === undefined ? null : Number(r.north_m),
 });
 
 async function loadBeacon(q: Queryable, d: DeviceRow, nowIso: string): Promise<Beacon> {
-  const rows = (await q.query<Record<string, unknown>>('SELECT source, observed_at, received_at, distance_m, accuracy_m, zone FROM device_readings WHERE device_id = $1 ORDER BY id DESC LIMIT $2', [d.id, KEEP_READINGS])).rows.map(readingOf);
+  const rows = (await q.query<Record<string, unknown>>('SELECT source, observed_at, received_at, distance_m, accuracy_m, zone, east_m, north_m FROM device_readings WHERE device_id = $1 ORDER BY id DESC LIMIT $2', [d.id, KEEP_READINGS])).rows.map(readingOf);
   const latest = rows[0] ?? null;
   const silentSeconds = latest ? Math.max(0, Math.round((Date.parse(nowIso) - Date.parse(latest.receivedAt)) / 1000)) : null;
   let status: Beacon['status'];
@@ -88,7 +96,13 @@ async function loadBeacon(q: Queryable, d: DeviceRow, nowIso: string): Promise<B
   let outsideSince: string | null = null;
   if (latest?.zone === 'OUTSIDE') for (const r of rows) if (r.zone === 'OUTSIDE') outsideSince = r.observedAt;
     else break;
-  return { id: d.id, label: d.label, animalId: d.animal_id, radiusM: d.radius_m, createdAt: iso(d.created_at), stoppedAt: d.stopped_at ? iso(d.stopped_at) : null, latest, status, outsideSince, silentSeconds, recent: rows.slice(0, 5) };
+  // Trajectoire : les mesures qui portent une position relative, de la plus ancienne à la plus récente.
+  const track: TrackPoint[] = rows
+    .slice(0, TRACK_POINTS)
+    .filter((r) => r.eastM !== null && r.eastM !== undefined && r.northM !== null && r.northM !== undefined)
+    .map((r) => ({ eastM: r.eastM as number, northM: r.northM as number, observedAt: r.observedAt, zone: r.zone, source: r.source }))
+    .reverse();
+  return { id: d.id, label: d.label, animalId: d.animal_id, radiusM: d.radius_m, createdAt: iso(d.created_at), stoppedAt: d.stopped_at ? iso(d.stopped_at) : null, latest, status, outsideSince, silentSeconds, recent: rows.slice(0, 5), track };
 }
 
 const SOURCE_TEXT: Record<BeaconReading['source'], string> = { PHONE_GPS: 'GPS du téléphone', SIMULATED: 'distance SIMULÉE à la main' };
@@ -158,7 +172,9 @@ export function beaconSentence(b: Beacon): Statement {
   const l = b.latest;
   if (b.status === 'STOPPED') return { nature: 'FACT', text: `${who} : arrêtée le ${fmtSec(b.stoppedAt!)}.`, sources: src };
   if (!l) return { nature: 'MISSING', text: `${who} : aucune mesure reçue. Cela ne dit rien de l’endroit où elle se trouve.`, sources: src };
-  const measured = l.distanceM === null ? 'aucune position disponible' : `${meters(l.distanceM)} du repère${l.accuracyM ? ` (précision ± ${meters(l.accuracyM)})` : ''}`;
+  // La direction n'est dite que si le téléphone transmet sa position relative, et si la balise est assez loin du repère pour qu'elle ait un sens.
+  const dir = bearingOf(l.eastM, l.northM, l.accuracyM);
+  const measured = l.distanceM === null ? 'aucune position disponible' : `${meters(l.distanceM)} du repère${dir ? `, vers le ${dir}` : ''}${l.accuracyM ? ` (précision ± ${meters(l.accuracyM)})` : ''}`;
   const when = `mesure du ${fmtSec(l.observedAt)}, reçue à ${fmtSec(l.receivedAt).slice(11)}, source : ${SOURCE_TEXT[l.source]}`;
   if (b.status === 'SILENT') return { nature: 'MISSING', text: `${who} : plus aucune mesure reçue depuis ${b.silentSeconds} secondes. Dernière mesure : ${measured} (${when}). Le silence d’une balise ne dit pas où elle se trouve.`, sources: src };
   if (b.status === 'OUTSIDE') return { nature: 'COMPUTED', text: `${who} : HORS de la zone. ${measured.charAt(0).toUpperCase() + measured.slice(1)}, pour un seuil de ${meters(b.radiusM)}${b.outsideSince ? `, depuis ${fmtSec(b.outsideSince).slice(11)}` : ''} (${when}).`, sources: src };
@@ -189,6 +205,7 @@ export function beaconFunctions(db: Db, alerts: { emailReady?: boolean } = {}) {
       : [{ nature: 'MISSING', text: 'Aucune balise n’est associée à un animal. Aucun capteur n’est connecté : rien n’est mesuré automatiquement.', sources: [] }];
     const limits = [
       'Une balise mesure sa propre distance à un repère choisi par l’utilisateur. Elle ne mesure ni la position exacte ni l’état de l’animal auquel elle est associée.',
+      'Suivi GPS : la position est relative au repère (distance et direction), calculée par le téléphone. Aucune coordonnée géographique n’est transmise.',
       'Dispositif de démonstration : un téléphone tenu à la main. Aucun capteur n’est posé sur un animal.',
       `« Hors de la zone » n’est dit que si la distance dépasse le seuil même avec la précision annoncée. Une balise est dite muette après ${SILENT_AFTER_SECONDS} secondes sans mesure.`,
     ];
@@ -223,7 +240,7 @@ export function beaconFunctions(db: Db, alerts: { emailReady?: boolean } = {}) {
         { label: 'Associée le', value: fmtSec(b.createdAt) },
         ...b.recent.map((r, i) => ({
           label: i === 0 ? 'Dernière mesure' : `Mesure précédente ${i}`,
-          value: `${r.distanceM === null ? 'pas de position' : meters(r.distanceM)}${r.accuracyM ? ` ± ${meters(r.accuracyM)}` : ''} · ${zone[r.zone]} · observée ${fmtSec(r.observedAt)} · reçue ${fmtSec(r.receivedAt).slice(11)} · ${SOURCE_TEXT[r.source]}`,
+          value: `${r.distanceM === null ? 'pas de position' : meters(r.distanceM)}${bearingOf(r.eastM, r.northM, r.accuracyM) ? ` vers le ${bearingOf(r.eastM, r.northM, r.accuracyM)}` : ''}${r.accuracyM ? ` ± ${meters(r.accuracyM)}` : ''} · ${zone[r.zone]} · observée ${fmtSec(r.observedAt)} · reçue ${fmtSec(r.receivedAt).slice(11)} · ${SOURCE_TEXT[r.source]}`,
         })),
       ],
       event: null,
@@ -403,8 +420,13 @@ export function registerBeacons(ctx: Ctx, notifier: AlertNotifier | null = null)
     const last = (await db.query<{ received_at: unknown }>('SELECT received_at FROM device_readings WHERE device_id = $1 ORDER BY id DESC LIMIT 1', [d.id])).rows[0];
     if (last && now - Date.parse(iso(last.received_at)) < 900) return reply.status(202).send({ accepted: false, reason: 'Une mesure par seconde au plus' });
     const accuracy = body.source === 'SIMULATED' ? 0 : body.accuracyM;
+    // Position relative : acceptée seulement si elle est complète et cohérente avec la distance annoncée (sinon l'une des deux est fausse).
+    const hasOffset = body.eastM !== null && body.eastM !== undefined && body.northM !== null && body.northM !== undefined;
+    if (hasOffset !== ((body.eastM ?? null) !== null || (body.northM ?? null) !== null)) throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { eastM: 'Position relative incomplète' } });
+    if (hasOffset && (body.distanceM === null || Math.abs(Math.hypot(body.eastM as number, body.northM as number) - body.distanceM) > Math.max(3, body.distanceM * 0.05)))
+      throw new HttpError(400, 'VALIDATION', 'Données invalides', { fields: { eastM: 'Position relative incohérente avec la distance' } });
     const zone = zoneOf(body.distanceM, accuracy, d.radius_m);
-    await db.query('INSERT INTO device_readings(device_id, org_id, source, observed_at, distance_m, accuracy_m, zone) VALUES ($1,$2,$3,$4,$5,$6,$7)', [d.id, d.org_id, body.source, body.observedAt, body.distanceM, accuracy, zone]);
+    await db.query('INSERT INTO device_readings(device_id, org_id, source, observed_at, distance_m, accuracy_m, zone, east_m, north_m) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [d.id, d.org_id, body.source, body.observedAt, body.distanceM, accuracy, zone, hasOffset ? body.eastM : null, hasOffset ? body.northM : null]);
     const opened = await trackIncident(db, d, zone, body, accuracy);
     // Un nouvel épisode d'éloignement : un e-mail, et un seul, si l'envoi est activé. La mesure n'attend pas la réponse du fournisseur.
     if (opened && notifier && body.distanceM !== null) void notifyIncident(ctx, notifier, d, opened, { source: body.source, observedAt: body.observedAt, distanceM: body.distanceM }, accuracy).catch(() => {});

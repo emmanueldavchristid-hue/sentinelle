@@ -195,6 +195,33 @@ export interface BeaconReading {
   distanceM: number | null;
   accuracyM: number | null;
   zone: ZoneState;
+  /**
+   * Position relative au repère, en mètres vers l'est et vers le nord (suivi GPS). Null si le téléphone ne l'a pas transmise.
+   * Ce ne sont pas des coordonnées géographiques : on sait où est la balise par rapport au repère, pas où est le repère.
+   */
+  eastM?: number | null;
+  northM?: number | null;
+}
+/** Point d'une trajectoire : position relative au repère à un instant observé. */
+export interface TrackPoint {
+  eastM: number;
+  northM: number;
+  observedAt: string;
+  zone: ZoneState;
+  source: BeaconReading['source'];
+}
+/** Les huit directions, dites en clair. */
+export type Bearing = 'nord' | 'nord-est' | 'est' | 'sud-est' | 'sud' | 'sud-ouest' | 'ouest' | 'nord-ouest';
+const BEARINGS: Bearing[] = ['nord', 'nord-est', 'est', 'sud-est', 'sud', 'sud-ouest', 'ouest', 'nord-ouest'];
+/**
+ * Direction d'une position relative au repère. Null si la direction n'a pas de sens : pas de position, ou balise trop près du
+ * repère pour que la précision annoncée permette de dire de quel côté elle se trouve.
+ */
+export function bearingOf(eastM: number | null | undefined, northM: number | null | undefined, accuracyM: number | null | undefined = 0): Bearing | null {
+  if (eastM === null || eastM === undefined || northM === null || northM === undefined) return null;
+  if (Math.hypot(eastM, northM) <= Math.max(3, accuracyM ?? 0)) return null;
+  const deg = (Math.atan2(eastM, northM) * 180) / Math.PI;
+  return BEARINGS[Math.round(((deg + 360) % 360) / 45) % 8]!;
 }
 export interface Beacon {
   id: string;
@@ -209,6 +236,8 @@ export interface Beacon {
   outsideSince: string | null;
   silentSeconds: number | null;
   recent: BeaconReading[];
+  /** Trajectoire récente (du plus ancien au plus récent), quand le téléphone transmet sa position relative. */
+  track?: TrackPoint[];
 }
 /** Incident d'éloignement : un épisode « hors zone » d'une balise, avec les faits qui l'ont justifié. */
 export interface IncidentSummary {
