@@ -43,6 +43,14 @@ jobs:
         run: pnpm --filter @sentinelle/web exec playwright install --with-deps chromium
       - name: Tests de bout en bout
         run: pnpm e2e
+      - name: Voix en baoulé contre un faux service de parole (écran, réponse en deux temps, son joué)
+        run: pnpm --filter @sentinelle/web exec playwright test --project=baoule-faux
+        env:
+          BAOULE: faux
+      - name: Service local de parole en baoulé (faux moteurs, aucun modèle)
+        run: |
+          python3 -m pip install --quiet numpy soundfile
+          python3 tools/baoule/test_serveur.py
       - uses: actions/upload-artifact@v5
         if: failure()
         with:

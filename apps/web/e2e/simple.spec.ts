@@ -88,9 +88,12 @@ test('affichage simple : réponse en phrases courtes, preuves à un clic, « je 
   const alert = page.getByRole('alert').filter({ hasText: 'hors de sa zone' });
   await expect(alert).toContainText('Poulet A', { timeout: 20_000 });
   await expect(alert).toContainText('données simulées');
-  const zone = page.getByRole('region', { name: 'Zone autour du repère' });
+  // Position réglée à la main : la carte ne s'appelle pas « suivi GPS », et le dit.
+  const zone = page.getByRole('region', { name: 'Suivi autour du repère' });
   await expect(zone).toContainText('Poulet A');
   await expect(zone).toContainText('DONNÉES SIMULÉES');
+  await expect(zone).toContainText('réglée à la main sur le téléphone');
+  await expect(page.getByRole('region', { name: 'Suivi GPS autour du repère' })).toHaveCount(0);
   await alert.getByRole('button', { name: 'Qui s’est éloigné ?' }).click();
   await expect(talk.getByRole('article').first()).toContainText('Une balise est hors de sa zone : « Poulet A ».');
   await phoneCtx.close();

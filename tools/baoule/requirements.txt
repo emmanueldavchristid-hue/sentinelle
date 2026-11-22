@@ -1,0 +1,15 @@
+# Service local de parole en baoulé (tools/baoule/serveur.py). Python 3.12, processeur seul.
+# Versions essayées le 22/11/2026 ; le code des trois derniers paquets a été lu avant installation.
+torch
+transformers
+soundfile
+huggingface_hub
+africa-tts==0.5.2
+africa-g2p==0.3.5
+pocket-tts==4.0.1
+# Écoute rapide (facultatif mais recommandé) : le modèle d'écoute est converti une fois pour CTranslate2, puis transcrit
+# en entiers 8 bits. Sans ces paquets ou sans le dossier data/baoule/stt-ct2, le modèle d'origine reste utilisé.
+#   ct2-transformers-converter --model data/baoule/stt --output_dir data/baoule/stt-ct2 --quantization int8 \
+#     --copy_files tokenizer.json preprocessor_config.json --force
+faster-whisper
+ctranslate2

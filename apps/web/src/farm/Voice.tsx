@@ -106,6 +106,8 @@ export function Dictation({
   onPhase,
   onEnd,
   quiet = false,
+  handle,
+  labels,
 }: {
   session: Session | null;
   /** Le serveur sait-il transcrire (assistant IA configuré) ? */
@@ -122,14 +124,21 @@ export function Dictation({
   onEnd?: (why: MicEnd) => void;
   /** Masque la ligne d'explication au repos (affichage simple). */
   quiet?: boolean;
+  /**
+   * Traitement propre de l'enregistrement (WAV 16 kHz en base64) à la place de la transcription par l'assistant : sert à la
+   * note vocale en baoulé, qui passe par un autre chemin. Renvoie un message d'erreur à afficher, ou null.
+   */
+  handle?: (wavBase64: string) => Promise<string | null>;
+  /** Libellés propres à cet usage : bouton au repos, bouton pendant le traitement, phrase d'explication. */
+  labels?: { idle: string; busy: string; hint: string };
 }) {
   const [phase, setPhaseState] = useState<MicPhase>('idle');
   const [elapsed, setElapsed] = useState(0);
   const [message, setMessage] = useState<{ tone: 'info' | 'error'; text: string } | null>(null);
   const rec = useRef<Recording | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const cb = useRef({ onText, onPhase, onEnd });
-  cb.current = { onText, onPhase, onEnd };
+  const cb = useRef({ onText, onPhase, onEnd, handle });
+  cb.current = { onText, onPhase, onEnd, handle };
   const setPhase = useCallback((p: MicPhase) => {
     setPhaseState(p);
     cb.current.onPhase?.(p);
@@ -161,6 +170,12 @@ export function Dictation({
         if (wav.seconds < 0.4) {
           setMessage({ tone: 'error', text: 'Enregistrement trop court. Parlez après avoir appuyé sur le micro.' });
           end = 'silence';
+          return;
+        }
+        if (cb.current.handle) {
+          const problem = await cb.current.handle(wav.base64);
+          setMessage(problem ? { tone: 'error', text: problem } : null);
+          if (problem) end = 'error';
           return;
         }
         const r = await api<TranscriptionReply>('/api/assistant/transcribe', { method: 'POST', session, timeoutMs: 45_000, body: { mimeType: 'audio/wav', audio: wav.base64 } });
@@ -286,13 +301,13 @@ export function Dictation({
 
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const recording = phase === 'recording';
-  const label = recording ? 'Arrêter et transcrire' : phase === 'starting' ? 'Autorisation du micro…' : phase === 'transcribing' ? 'Transcription…' : big ? 'Parler' : 'Dicter';
+  const label = recording ? 'Arrêter et transcrire' : phase === 'starting' ? 'Autorisation du micro…' : phase === 'transcribing' ? (labels?.busy ?? 'Transcription…') : big ? 'Parler' : (labels?.idle ?? 'Dicter');
   const status = recording ? (
     <>
       <b className="text-laterite">Microphone actif.</b> Parlez : l’enregistrement s’arrête quand vous vous taisez. Il est transcrit, jamais conservé. Limite : {maxSeconds} secondes.
     </>
   ) : (
-    (message?.text ?? blocked ?? (quiet ? '' : 'Dictée : appuyez, parlez, l’enregistrement s’arrête quand vous vous taisez. Votre phrase est transcrite puis envoyée.'))
+    (message?.text ?? blocked ?? (quiet ? '' : (labels?.hint ?? 'Dictée : appuyez, parlez, l’enregistrement s’arrête quand vous vous taisez. Votre phrase est transcrite puis envoyée.')))
   );
 
   return (
@@ -379,6 +394,13 @@ const cache = new Map<string, string>(); // texte -> adresse locale du son déj�
 let player: HTMLAudioElement | null = null;
 let generation = 0;
 
+/** Autres voix de l'écran (la voix baoulé) : elles se taisent en même temps que la voix de synthèse. */
+const otherVoices = new Set<() => void>();
+export const onStopSpeech = (stop: () => void) => {
+  otherVoices.add(stop);
+  return () => void otherVoices.delete(stop);
+};
+
 export function stopSpeech() {
   generation++;
   if (player) {
@@ -386,6 +408,7 @@ export function stopSpeech() {
     player = null;
   }
   if (canSpeak()) window.speechSynthesis.cancel();
+  for (const stop of otherVoices) stop();
 }
 
 async function serverAudio(text: string, session: Session | null): Promise<string | null> {

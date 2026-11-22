@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BEACON_STATUS_LABELS, type Beacon } from '@sentinelle/contracts';
+import { BEACON_SOURCE_LABELS, BEACON_STATUS_LABELS, type Beacon } from '@sentinelle/contracts';
 import { api, ApiFailure, NetworkError } from '../api';
 
 /**
  * Page « balise de démonstration », ouverte sur un téléphone par le lien ou le QR code d'association.
  * Le téléphone joue le rôle d'un capteur de proximité : il mesure sa distance à un repère et la transmet au serveur.
- * - Les coordonnées GPS ne quittent jamais le téléphone : seule la distance (en mètres) et sa précision sont envoyées.
+ * - Les coordonnées GPS ne quittent jamais le téléphone. Sont envoyées : la distance au repère, sa précision, et la position
+ *   RELATIVE au repère (mètres vers l'est et vers le nord), qui permet le suivi de la trajectoire sans dire où l'on est.
  * - Mode simulé : la distance est réglée à la main et transmise comme SIMULÉE, pour une démonstration en salle
  *   (en intérieur, le GPS ne distingue pas quelques mètres).
  * - L'état affiché est celui que le serveur a enregistré, pas une supposition du téléphone.
@@ -27,6 +28,14 @@ function haversine(a: { lat: number; lon: number }, b: { lat: number; lon: numbe
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
+/** Position relative au repère, en mètres vers l'est et vers le nord (approximation plane, exacte à quelques centimètres sur ces distances). */
+function offset(home: { lat: number; lon: number }, p: { lat: number; lon: number }): { east: number; north: number } {
+  const R = 6_371_000;
+  const rad = (d: number) => (d * Math.PI) / 180;
+  return { east: R * Math.cos(rad(home.lat)) * rad(p.lon - home.lon), north: R * rad(p.lat - home.lat) };
+}
+const round1 = (n: number) => Math.round(n * 10) / 10;
+const DIRECTIONS: [string, number][] = [['Nord', 0], ['Nord-est', 45], ['Est', 90], ['Sud-est', 135], ['Sud', 180], ['Sud-ouest', 225], ['Ouest', 270], ['Nord-ouest', 315]];
 const geoError = (code: number) =>
   code === 1 ? 'Position refusée. Autorisez la localisation pour ce site dans le navigateur, ou utilisez le mode simulé.' : code === 2 ? 'Position indisponible sur cet appareil pour l’instant.' : 'Le téléphone n’a pas obtenu de position à temps. Rapprochez-vous d’une fenêtre, ou utilisez le mode simulé.';
 const clock = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { timeZone: 'Africa/Abidjan', hour12: false });
@@ -48,9 +57,11 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
     }
   });
   const [sim, setSim] = useState(5);
+  /** Direction simulée, en degrés depuis le nord (mode simulé uniquement). */
+  const [simBearing, setSimBearing] = useState(45);
   const [sendMsg, setSendMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
-  const live = useRef({ mode, fix, home, sim });
-  live.current = { mode, fix, home, sim };
+  const live = useRef({ mode, fix, home, sim, simBearing });
+  live.current = { mode, fix, home, sim, simBearing };
   const watchId = useRef<number | null>(null);
 
   useEffect(() => {
@@ -78,7 +89,7 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
     watchId.current = navigator.geolocation.watchPosition(
       (p) => (setFix({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, at: Date.now() }), setGeoMsg(null)),
       (e) => setGeoMsg(geoError(e.code)),
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 20_000 },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 },
     );
     // Écran allumé si le navigateur le permet : un téléphone en veille n'envoie plus rien.
     void (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<unknown> } }).wakeLock?.request('screen').catch(() => {});
@@ -108,14 +119,21 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
     const tick = async () => {
       const s = live.current;
       const fresh = s.fix && Date.now() - s.fix.at < FIX_STALE_MS ? s.fix : null;
-      const reading =
-        s.mode === 'sim'
-          ? { source: 'SIMULATED', distanceM: s.sim, accuracyM: 0 }
-          : fresh && s.home
-            ? { source: 'PHONE_GPS', distanceM: Math.round(haversine(s.home, fresh) * 10) / 10, accuracyM: Math.round(Math.hypot(fresh.acc, s.home.acc) * 10) / 10 }
-            : { source: 'PHONE_GPS', distanceM: null, accuracyM: null };
+      let reading: Record<string, unknown>;
+      // Instant observé : celui où le téléphone a obtenu sa position, pas celui de l'envoi. Une position un peu ancienne
+      // renvoyée ici garde donc son heure réelle ; l'écran de l'éleveur montre l'instant observé et l'instant reçu.
+      let observedAt = Date.now();
+      if (s.mode === 'sim') {
+        const a = (s.simBearing * Math.PI) / 180;
+        reading = { source: 'SIMULATED', distanceM: s.sim, accuracyM: 0, eastM: round1(s.sim * Math.sin(a)), northM: round1(s.sim * Math.cos(a)) };
+      } else if (fresh && s.home) {
+        // Suivi GPS : la distance et la position relative viennent du même calcul, pour rester cohérentes entre elles.
+        const o = offset(s.home, fresh);
+        observedAt = fresh.at;
+        reading = { source: 'PHONE_GPS', distanceM: round1(Math.hypot(o.east, o.north)), accuracyM: round1(Math.hypot(fresh.acc, s.home.acc)), eastM: round1(o.east), northM: round1(o.north) };
+      } else reading = { source: 'PHONE_GPS', distanceM: null, accuracyM: null };
       try {
-        await api(`/api/devices/${encodeURIComponent(id)}/readings`, { method: 'POST', headers, body: { ...reading, observedAt: new Date().toISOString() } });
+        await api(`/api/devices/${encodeURIComponent(id)}/readings`, { method: 'POST', headers, body: { ...reading, observedAt: new Date(observedAt).toISOString() } });
         setSendMsg({ tone: 'ok', text: `Dernier envoi à ${clock(new Date().toISOString())}.` });
       } catch (e) {
         setSendMsg({ tone: 'error', text: e instanceof NetworkError ? 'Envoi impossible : pas de connexion au serveur. La balise sera dite muette.' : e instanceof ApiFailure ? e.message : 'Envoi impossible.' });
@@ -178,7 +196,7 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
               {l ? (
                 <p className="v-meta mt-1">
                   {l.distanceM === null ? 'Pas de position' : `${Math.round(l.distanceM)} m du repère`}
-                  {l.accuracyM ? ` (précision ± ${Math.round(l.accuracyM)} m)` : ''} · observée à <span className="num">{clock(l.observedAt)}</span> · reçue à <span className="num">{clock(l.receivedAt)}</span> · {l.source === 'SIMULATED' ? 'distance simulée' : 'GPS du téléphone'}
+                  {l.accuracyM ? ` (précision ± ${Math.round(l.accuracyM)} m)` : ''} · observée à <span className="num">{clock(l.observedAt)}</span> · reçue à <span className="num">{clock(l.receivedAt)}</span> · {BEACON_SOURCE_LABELS[l.source]}
                 </p>
               ) : (
                 <p className="v-meta mt-1">Aucune mesure reçue pour l’instant.</p>
@@ -216,7 +234,7 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
                     {home && <p className="v-meta mt-1">Repère fixé (précision ± {Math.round(home.acc)} m). Il reste sur ce téléphone.</p>}
                   </li>
                   <li>
-                    <p className="font-semibold">3. S’éloigner : la distance est transmise toutes les 3 secondes</p>
+                    <p className="font-semibold">3. S’éloigner : la position par rapport au repère est transmise toutes les 3 secondes</p>
                     <p className="v-figure mt-1 text-[44px]">{distance === null ? '— m' : `${Math.round(distance)} m`}</p>
                   </li>
                 </ol>
@@ -245,12 +263,20 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
                     </button>
                   ))}
                 </div>
+                <p className="font-semibold">Direction simulée</p>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Direction simulée">
+                  {DIRECTIONS.map(([name, deg]) => (
+                    <button key={name} type="button" className="v-chip" aria-pressed={simBearing === deg} onClick={() => setSimBearing(deg)}>
+                      {name}
+                    </button>
+                  ))}
+                </div>
                 <p className="v-meta">Chaque envoi est marqué « distance simulée » dans les données, les réponses et les preuves.</p>
               </section>
             )}
 
             <p className="v-meta border-t border-filet pt-3">
-              Gardez cette page ouverte et l’écran allumé : un téléphone en veille n’envoie plus rien, et la balise est alors dite « muette ». Les coordonnées GPS restent sur ce téléphone ; seule la distance au repère est transmise.
+              Gardez cette page ouverte et l’écran allumé : un téléphone en veille n’envoie plus rien, et la balise est alors dite « muette ». Les coordonnées GPS restent sur ce téléphone ; seules la distance et la position par rapport au repère (mètres vers l’est et vers le nord) sont transmises.
             </p>
           </>
         )}

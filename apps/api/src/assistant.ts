@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { extractAnimalIds, isRealDate, type AssistantReply, type AssistantStatus, type FindAnimalData, type ObservationAssistReply, type ObservationDraftData, type SituationData, type SourceData, type ToolResult, type TranscriptionReply } from '@sentinelle/contracts';
+import { extractAnimalIds, isRealDate, type AssistantReply, type AssistantStatus, type BaouleStatus, type FindAnimalData, type ObservationAssistReply, type ObservationDraftData, type SituationData, type SourceData, type ToolResult, type TranscriptionReply } from '@sentinelle/contracts';
 import { formatTemporal, type TemporalValue } from '@sentinelle/domain';
 import type { Db, Queryable } from './db.js';
 import type { FarmTools } from './farm.js';
@@ -137,7 +137,7 @@ export const TOOL_DECLARATIONS: GeminiTool[] = [
   { name: 'find_animal', description: 'Recherche un animal par identifiant, même approximatif (« b 017 »).', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
   { name: 'get_animal', description: 'Fiche d’un animal : lieu actuel enregistré, chronologie (présences, déplacements, observations, corrections), informations manquantes.', parameters: { type: 'object', properties: { animalId: { type: 'string' } }, required: ['animalId'] } },
   { name: 'list_missing', description: 'Informations à compléter ou à vérifier : lieu actuel absent, dates inconnues, incohérences, tâches ouvertes.', parameters: { type: 'object', properties: {} } },
-  { name: 'get_beacons', description: 'Balises de démonstration (un téléphone joue le rôle de capteur de proximité) : pour chacune, animal associé, distance au repère, précision, seuil, statut (dans la zone, hors zone, incertain, muette), source de la mesure (GPS du téléphone ou distance simulée).', parameters: { type: 'object', properties: {} } },
+  { name: 'get_beacons', description: 'Balises de démonstration (un téléphone ou un ordinateur joue le rôle de capteur de proximité ; tout appareil qui ouvre l’application et autorise sa position est suivi) : pour chacune, nom, animal associé s’il y en a un, distance au repère commun et direction, précision, seuil, statut (dans la zone, hors zone, incertain, muette), source de la mesure (GPS du téléphone, position donnée par le navigateur, ou distance simulée).', parameters: { type: 'object', properties: {} } },
   {
     name: 'get_incident',
     description: 'Incident d’éloignement d’une balise, déjà enregistré : ce qui a été détecté, quand, la mesure et la règle qui le justifient, puis l’état ACTUEL de la balise. Sans identifiant : l’incident le plus récent. À appeler dès que l’utilisateur parle d’une alerte ou d’un incident, sans lui demander de le raconter.',
@@ -292,6 +292,8 @@ export interface AssistantOptions {
   live?: LiveOptions | null;
   /** État de la conversation en direct, fourni par `registerLive`. */
   liveStatus?: () => { available: boolean; model: string | null; maxSeconds: number; idleSeconds: number };
+  /** État de la voix en baoulé, fourni par `registerBaoule`. */
+  baouleStatus?: () => BaouleStatus;
 }
 
 /** WAV PCM 16 bits : 44 octets d'en-tête, puis les échantillons. Renvoie la durée en secondes, ou null si ce n'est pas un WAV lisible. */
@@ -309,7 +311,7 @@ export function registerAssistant(ctx: Ctx, tools: FarmTools, opts: AssistantOpt
   const used = new Map<string, number>();
 
   const voiceMaxSeconds = opts.voiceMaxSeconds ?? 30;
-  const voice = () => ({ available: !!opts.model?.transcribe, maxSeconds: voiceMaxSeconds, speech: !!opts.model?.speak, ...(opts.liveStatus ? { live: opts.liveStatus() } : {}) });
+  const voice = () => ({ available: !!opts.model?.transcribe, maxSeconds: voiceMaxSeconds, speech: !!opts.model?.speak, ...(opts.liveStatus ? { live: opts.liveStatus() } : {}), ...(opts.baouleStatus ? { baoule: opts.baouleStatus() } : {}) });
   /** Compteur des réponses parlées par utilisateur (limite de consommation, distincte des questions). */
   const spoken = new Map<string, number>();
   const status = (): AssistantStatus =>

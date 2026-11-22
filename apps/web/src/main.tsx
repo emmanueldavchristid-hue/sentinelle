@@ -15,6 +15,7 @@ import { Report } from './pages/report';
 import { FarmHome } from './pages/farm';
 import { BeaconPage } from './pages/beacon';
 import { conversation, session as farmSession } from './farm/store';
+import { TrackingBanner } from './farm/Tracking';
 
 interface DemoUser {
   id: string;
@@ -265,6 +266,8 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppProvider>
+      {/* Suivi automatique de l'appareil comme balise (mode démonstration) : une fois pour toutes les pages et tous les rôles. */}
+      <TrackingBanner />
       <Router />
     </AppProvider>
   </StrictMode>,

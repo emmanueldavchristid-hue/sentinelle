@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { beaconName, BEACON_STATUS_LABELS, type Beacon, type BeaconsData, type IncidentSummary, type ToolResult } from '@sentinelle/contracts';
+import { ageText, beaconName, bearingOf, towardText, BEACON_SOURCE_LABELS, BEACON_STATUS_LABELS, distanceText, type Beacon, type BeaconsData, type IncidentSummary, type ToolResult } from '@sentinelle/contracts';
 import { api, ApiFailure, errorMessage, type Session } from '../api';
 import { fmtState, SourceChip } from './parts';
 
 /**
- * Balises de démonstration sur l'écran de l'éleveur : association (lien et QR code pour le téléphone), suivi, arrêt.
- * Le libellé reste « balise de démonstration : un téléphone », jamais « capteur connecté à un animal ».
+ * Balises de démonstration sur l'écran de l'éleveur.
+ * - Suivi automatique : tout appareil qui ouvre le lien de l'application et autorise sa position apparaît ici tout seul. Sa
+ *   distance est calculée par le serveur par rapport au repère commun ; on voit qui a fixé ce repère et quand, et on peut le
+ *   placer sur un appareil suivi.
+ * - Association à la main (lien et QR code pour le téléphone) : l'ancien parcours reste disponible, il n'est plus nécessaire.
+ * Le libellé reste « balise », « appareil » ou « téléphone », jamais « capteur connecté à un animal ».
  */
 const GLYPH: Record<Beacon['status'], string> = { INSIDE: '●', OUTSIDE: '▲', UNCERTAIN: '?', NO_FIX: '∅', NEVER: '○', SILENT: '…', STOPPED: '■' };
 const TONE: Record<Beacon['status'], string> = { INSIDE: 'text-paturage', OUTSIDE: 'text-danger', UNCERTAIN: 'text-amber', NO_FIX: 'text-amber', NEVER: 'text-encre-2', SILENT: 'text-amber', STOPPED: 'text-encre-2' };
@@ -102,7 +106,7 @@ export function BeaconAlert({
       <div role="status" className="v-alert" data-tone="calm">
         <p className="v-alert-figure">
           <span className="num">{fmtState(closed.closedAt!).slice(11, 16)}</span>
-          <small>retour dans la zone</small>
+          <small>{closed.closeReason === 'DEVICE_STOPPED' ? 'balise arrêtée' : closed.closeReason === 'ANCHOR_MOVED' ? 'repère déplacé' : 'retour dans la zone'}</small>
         </p>
         <div>
           <p className="v-field-flag text-paturage">Incident terminé</p>
@@ -152,7 +156,8 @@ export function BeaconAlert({
                   , associée à <b className="num">{b.animalId}</b>,
                 </>
               ) : null}{' '}
-              est à <b>{b.latest?.distanceM === null || !b.latest ? '?' : Math.round(b.latest.distanceM)} m</b> du repère, pour un seuil de {b.radiusM} m
+              est à <b>{b.latest?.distanceM === null || !b.latest ? '? m' : distanceText(b.latest.distanceM)}</b> du repère
+              {bearingOf(b.latest?.eastM, b.latest?.northM, b.latest?.accuracyM) ? `, ${towardText(bearingOf(b.latest?.eastM, b.latest?.northM, b.latest?.accuracyM)!)}` : ''}, pour un seuil de {b.radiusM} m
               {b.outsideSince ? (
                 <>
                   , depuis <span className="num">{fmtState(b.outsideSince).slice(11)}</span>
@@ -163,7 +168,11 @@ export function BeaconAlert({
             <EmailLine email={openFor(b.id)?.email} />
           </div>
         ))}
-        {detailed && <p className="v-meta mt-1.5">La balise mesure sa propre distance, pas la position de l’animal. Sa distance est calculée par le téléphone depuis le repère.</p>}
+        {detailed && (
+          <p className="v-meta mt-1.5">
+            La balise mesure sa propre distance, pas la position de l’animal. {out.some((b) => b.auto) ? 'Sa distance est calculée par le serveur, à partir de la position envoyée par l’appareil et du repère commun.' : 'Sa distance est calculée par le téléphone depuis le repère.'}
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           {out.map((b) => {
             const inc = openFor(b.id);
@@ -206,13 +215,26 @@ export function BeaconsPanel({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [paired, setPaired] = useState<{ id: string; url: string; qr: string | null } | null>(null);
+  /** Placer le repère efface les trajectoires en cours : il faut le confirmer d'un second clic sur la même ligne. */
+  const [anchorAsk, setAnchorAsk] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     if (defaultAnimal) setAnimalId(defaultAnimal);
   }, [defaultAnimal]);
+  useEffect(() => {
+    if (!anchorAsk) return;
+    const t = setTimeout(() => setAnchorAsk(null), 6000);
+    return () => clearTimeout(t);
+  }, [anchorAsk]);
 
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
   const beacons = result?.data.beacons ?? [];
   const active = beacons.filter((b) => b.status !== 'STOPPED');
+  // D'abord les appareils suivis automatiquement, dans l'ordre de leur arrivée (« Appareil 1 » reste en tête), les arrêtés à la fin.
+  const byArrival = (a: Beacon, b: Beacon) => Number(a.status === 'STOPPED') - Number(b.status === 'STOPPED') || a.createdAt.localeCompare(b.createdAt);
+  const autos = beacons.filter((b) => b.auto).sort(byArrival);
+  const manuals = beacons.filter((b) => !b.auto);
+  const anchor = result?.data.anchor ?? null;
   // Nom proposé : Poulet A, Poulet B… (première lettre libre). C'est le nom de la balise, pas un animal enregistré.
   const nextName = `Poulet ${'ABCDEFGHIJ'.split('').find((l) => !beacons.some((b) => b.label === `Poulet ${l}`)) ?? 'A'}`;
 
@@ -245,6 +267,76 @@ export function BeaconsPanel({
       setMsg(errorMessage(err));
     }
   };
+  const placeAnchor = async (b: Beacon) => {
+    if (anchorAsk !== b.id) return setAnchorAsk(b.id);
+    setAnchorAsk(null);
+    setMsg(null);
+    try {
+      await api(`/api/farm/devices/${encodeURIComponent(b.id)}/anchor`, { method: 'POST', session });
+      setNote(`Repère placé sur « ${beaconName(b)} ». Les distances sont calculées par rapport à lui à partir des prochaines positions reçues.`);
+      onChanged();
+    } catch (err) {
+      setMsg(errorMessage(err));
+    }
+  };
+
+  const row = (b: Beacon) => {
+    const l = b.latest;
+    const dir = bearingOf(l?.eastM, l?.northM, l?.accuracyM);
+    const where = l ? (l.distanceM === null ? 'Pas de position' : `${distanceText(l.distanceM)} du repère${dir ? `, ${towardText(dir)}` : ''}`) : null;
+    const source = l ? (l.source === 'SIMULATED' ? 'distance SIMULÉE' : BEACON_SOURCE_LABELS[l.source]) : null;
+    // Ancienneté de la dernière position reçue : on voit d'un coup d'œil si l'appareil transmet encore.
+    const age = b.status === 'STOPPED' || b.silentSeconds === null ? '' : b.status === 'SILENT' ? ` · muette depuis ${b.silentSeconds < 90 ? `${b.silentSeconds} s` : `${Math.round(b.silentSeconds / 60)} min`} (cela ne dit pas où elle se trouve)` : ` · reçue ${ageText(b.silentSeconds)}`;
+    return (
+      <li key={b.id} className="flex flex-wrap items-start justify-between gap-3 border-b border-filet py-3">
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">
+            <span className={`v-field-flag ${TONE[b.status]}`}>
+              <span aria-hidden="true">{GLYPH[b.status]} </span>
+              {BEACON_STATUS_LABELS[b.status]}
+            </span>{' '}
+            · <span className="num">{beaconName(b)}</span>
+            {detailed && beaconName(b) !== b.id && <span className="num text-encre-2"> ({b.id})</span>}
+            {b.animalId ? (
+              <>
+                {' '}
+                · associée à <span className="num">{b.animalId}</span>
+              </>
+            ) : null}
+          </p>
+          <p className="v-meta mt-0.5">
+            {!l
+              ? `Seuil ${b.radiusM} m · aucune mesure reçue`
+              : !detailed
+                ? `${where} · seuil ${b.radiusM} m${l.source === 'PHONE_GPS' ? '' : ` · ${source}`}`
+                : `${where}${l.accuracyM ? ` (± ${distanceText(l.accuracyM)})` : ''} · seuil ${b.radiusM} m · observée à ${fmtState(l.observedAt).slice(11)} · reçue à ${fmtState(l.receivedAt).slice(11)} · ${source}`}
+            {l ? age : ''}
+          </p>
+          {detailed ? (
+            <p className="mt-1">
+              <SourceChip sourceRef={`DEVICE:${b.id}`} onSource={onSource} />
+            </p>
+          ) : (
+            <button type="button" className="mt-1 text-[14px] text-encre-2 underline underline-offset-4" onClick={() => onSource(`DEVICE:${b.id}`)}>
+              Voir le détail
+            </button>
+          )}
+        </div>
+        {b.status !== 'STOPPED' && (
+          <div className="flex flex-wrap justify-end gap-2">
+            {b.auto && b.canAnchor && (
+              <button type="button" className={`btn btn-sm ${anchorAsk === b.id ? 'btn-primary' : ''}`} aria-label={`${anchorAsk === b.id ? 'Confirmer : placer le repère sur cet appareil' : 'Placer le repère sur cet appareil'} : ${beaconName(b)}`} onClick={() => placeAnchor(b)}>
+                {anchorAsk === b.id ? 'Confirmer : repère sur cet appareil' : 'Placer le repère sur cet appareil'}
+              </button>
+            )}
+            <button type="button" className="btn btn-sm" aria-label={`Arrêter ${beaconName(b)}`} onClick={() => stop(b.id)}>
+              Arrêter
+            </button>
+          </div>
+        )}
+      </li>
+    );
+  };
 
   return (
     <section aria-labelledby="bal-h">
@@ -259,7 +351,36 @@ export function BeaconsPanel({
           {detailed ? 'Associer une balise' : 'Ajouter une balise'}
         </button>
       </div>
-      <p className="v-meta mt-2 max-w-[70ch]">{detailed ? 'Un téléphone joue le rôle d’un capteur de proximité : il transmet sa distance à un repère. Aucun capteur n’est posé sur un animal. Actualisé toutes les 4 secondes tant qu’une balise est suivie.' : 'Un téléphone joue le rôle d’un capteur : aucun capteur n’est posé sur un animal.'}</p>
+      <p className="v-meta mt-2 max-w-[70ch]">
+        {detailed
+          ? 'Tout appareil qui ouvre le lien de l’application et autorise sa position est suivi automatiquement comme balise : son navigateur envoie sa position, et le serveur calcule sa distance au repère commun. Rien à associer, rien à scanner. Aucun capteur n’est posé sur un animal. Actualisé toutes les 2 secondes tant qu’un appareil est suivi.'
+          : 'Tout appareil qui ouvre le lien et autorise sa position est suivi comme balise. Aucun capteur n’est posé sur un animal.'}
+      </p>
+      {/* Le repère commun : qui l'a fixé et quand. Sa position reste sur le serveur, elle n'est affichée nulle part. */}
+      {(anchor || autos.length > 0 || detailed) && (
+        <p className="v-meta mt-1.5 max-w-[70ch]">
+          <span aria-hidden="true">■ </span>
+          {anchor ? (
+            <>
+              Repère commun : {anchor.how === 'MOVED' ? 'placé sur' : 'fixé par'} <b className="num text-encre">{anchor.byLabel ?? anchor.byDeviceId ?? 'un appareil'}</b> le <span className="num">{fmtState(anchor.setAt)}</span>
+              {anchor.how === 'MOVED' ? ' (depuis cet écran)' : ' (première position reçue)'}
+              {anchor.accuracyM ? `, précision de cette position : ± ${distanceText(anchor.accuracyM)}` : ''}.{detailed ? ' Sa position reste sur le serveur.' : ''}
+            </>
+          ) : (
+            <>Repère commun : pas encore fixé. La première position reçue d’un appareil le fixera.</>
+          )}
+        </p>
+      )}
+      {anchor && (anchor.accuracyM ?? 0) > 50 && (
+        <p className="mt-1.5 max-w-[70ch] border-l-[3px] border-amber-line pl-3 text-[14px] text-amber">
+          Repère imprécis (± {distanceText(anchor.accuracyM!)}) : il a été pris sur un appareil dont la position est approximative, un ordinateur par exemple. Placez-le sur un appareil dont la position est précise.
+        </p>
+      )}
+      {note && (
+        <p className="v-meta mt-1.5 max-w-[70ch]" aria-live="polite">
+          {note}
+        </p>
+      )}
       {result?.data.simulated && (
         <p role="status" className="mt-2 bg-laterite-soft px-3 py-2 font-bold text-laterite">
           DONNÉES SIMULÉES : au moins une balise transmet une distance réglée à la main, pas une mesure.
@@ -327,54 +448,29 @@ export function BeaconsPanel({
           Les balises n’ont pas pu être lues. {errorMessage(error)}
         </p>
       ) : beacons.length === 0 ? (
-        <p className="mt-3 border border-dashed border-filet px-4 py-4 text-encre-2">Aucune balise associée. Rien n’est mesuré automatiquement.</p>
+        <p className="mt-3 border border-dashed border-filet px-4 py-4 text-encre-2">Aucun appareil suivi, aucune balise associée. Rien n’est mesuré pour l’instant.</p>
       ) : (
-        <ul className="mt-1">
-          {beacons.map((b) => (
-            <li key={b.id} className="flex flex-wrap items-start justify-between gap-3 border-b border-filet py-3">
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold">
-                  <span className={`v-field-flag ${TONE[b.status]}`}>
-                    <span aria-hidden="true">{GLYPH[b.status]} </span>
-                    {BEACON_STATUS_LABELS[b.status]}
-                  </span>{' '}
-                  · <span className="num">{beaconName(b)}</span>
-                  {detailed && beaconName(b) !== b.id && <span className="num text-encre-2"> ({b.id})</span>}
-                  {b.animalId ? (
-                    <>
-                      {' '}
-                      · associée à <span className="num">{b.animalId}</span>
-                    </>
-                  ) : null}
-                </p>
-                <p className="v-meta mt-0.5">
-                  {!detailed
-                    ? b.latest
-                      ? `${b.latest.distanceM === null ? 'Pas de position' : `${Math.round(b.latest.distanceM)} m du repère`} · seuil ${b.radiusM} m${b.latest.source === 'SIMULATED' ? ' · distance SIMULÉE' : ''}`
-                      : `Seuil ${b.radiusM} m · aucune mesure reçue`
-                    : b.latest
-                    ? `${b.latest.distanceM === null ? 'Pas de position' : `${Math.round(b.latest.distanceM)} m du repère`}${b.latest.accuracyM ? ` (± ${Math.round(b.latest.accuracyM)} m)` : ''} · seuil ${b.radiusM} m · observée à ${fmtState(b.latest.observedAt).slice(11)} · reçue à ${fmtState(b.latest.receivedAt).slice(11)} · ${b.latest.source === 'SIMULATED' ? 'distance SIMULÉE' : 'GPS du téléphone'}`
-                    : `Seuil ${b.radiusM} m · aucune mesure reçue`}
-                  {b.status === 'SILENT' ? ` · muette depuis ${b.silentSeconds} s (cela ne dit pas où elle se trouve)` : ''}
-                </p>
-                {detailed ? (
-                  <p className="mt-1">
-                    <SourceChip sourceRef={`DEVICE:${b.id}`} onSource={onSource} />
-                  </p>
-                ) : (
-                  <button type="button" className="mt-1 text-[14px] text-encre-2 underline underline-offset-4" onClick={() => onSource(`DEVICE:${b.id}`)}>
-                    Voir le détail
-                  </button>
-                )}
-              </div>
-              {b.status !== 'STOPPED' && (
-                <button type="button" className="btn btn-sm" onClick={() => stop(b.id)}>
-                  Arrêter
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
+        <>
+          {autos.length > 0 && (
+            <>
+              <h3 className="v-kicker mt-4">
+                Appareils suivis automatiquement · <span className="num">{autos.filter((b) => b.status !== 'STOPPED').length}</span>
+              </h3>
+              <ul className="mt-0.5" aria-label="Appareils suivis automatiquement">
+                {autos.map(row)}
+              </ul>
+              {autos.some((b) => b.canAnchor) && <p className="v-meta mt-1.5">Placer le repère sur un appareil efface les trajectoires calculées avec l’ancien repère ; les distances repartent des prochaines positions reçues.</p>}
+            </>
+          )}
+          {manuals.length > 0 && (
+            <>
+              {autos.length > 0 && <h3 className="v-kicker mt-4">Balises associées à la main</h3>}
+              <ul className="mt-1" aria-label="Balises associées à la main">
+                {manuals.map(row)}
+              </ul>
+            </>
+          )}
+        </>
       )}
       {detailed && active.length > 0 && result && (
         <p className="v-meta mt-2">

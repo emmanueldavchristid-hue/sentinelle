@@ -283,7 +283,7 @@ describe('Dictée : relais serveur, enregistrement court, rien de conservé', ()
     const r = await post(app, { mimeType: 'audio/wav', audio: wav(1) });
     expect(r.statusCode).toBe(503);
     expect(r.json().message).toMatch(/Dictée indisponible.*Utilisez le texte/);
-    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: false, maxSeconds: 30, speech: false, live: { available: false, model: null, maxSeconds: 0, idleSeconds: 0 } });
+    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: false, maxSeconds: 30, speech: false, live: { available: false, model: null, maxSeconds: 0, idleSeconds: 0 }, baoule: { enabled: false, available: false, reason: 'Voix en baoulé non activée sur ce serveur.', validated: false, examples: 0, engine: null } });
     await app.close();
   });
 
@@ -295,7 +295,7 @@ describe('Dictée : relais serveur, enregistrement court, rien de conservé', ()
     expect(r.json()).toMatchObject({ text: 'Ajoute une observation sur B-017. Elle mange moins depuis ce matin.', provider: 'Faux modèle (test)' });
     expect(r.json().notice).toMatch(/relisez-la.*n’est pas conservé/);
     expect(got).toMatchObject({ mimeType: 'audio/wav' });
-    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: true, maxSeconds: 10, speech: false, live: { available: false, model: null, maxSeconds: 0, idleSeconds: 0 } });
+    expect((await app.inject({ url: '/api/health' })).json().assistant.voice).toEqual({ available: true, maxSeconds: 10, speech: false, live: { available: false, model: null, maxSeconds: 0, idleSeconds: 0 }, baoule: { enabled: false, available: false, reason: 'Voix en baoulé non activée sur ce serveur.', validated: false, examples: 0, engine: null } });
     const logged = (await db.query<{ detail: unknown }>(`SELECT detail FROM audit_events WHERE action = 'ASSISTANT_TRANSCRIBE' ORDER BY id DESC LIMIT 1`)).rows[0]!.detail;
     expect(JSON.stringify(logged)).not.toMatch(/mange moins|UklGR/);
     // Le texte transcrit suit le parcours écrit : il ne produit qu'un brouillon.

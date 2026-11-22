@@ -188,14 +188,48 @@ export type ZoneState = 'INSIDE' | 'OUTSIDE' | 'UNCERTAIN' | 'NO_FIX';
  * la précision annoncée et le statut calculé par le serveur. L'identifiant du dispositif est porté par la balise.
  */
 export interface BeaconReading {
-  /** PHONE_GPS : GPS du navigateur d'un téléphone. SIMULATED : distance réglée à la main, à afficher comme simulée. */
-  source: 'PHONE_GPS' | 'SIMULATED';
+  /**
+   * PHONE_GPS : GPS du navigateur d'un téléphone. BROWSER_POSITION : position donnée par le navigateur d'un appareil qui ne se
+   * dit pas téléphone (un ordinateur n'a en général pas de GPS). SIMULATED : distance réglée à la main, à afficher comme simulée.
+   */
+  source: 'PHONE_GPS' | 'BROWSER_POSITION' | 'SIMULATED';
   observedAt: string;
   receivedAt: string;
   distanceM: number | null;
   accuracyM: number | null;
   zone: ZoneState;
+  /**
+   * Position relative au repère, en mètres vers l'est et vers le nord (suivi GPS). Null si le téléphone ne l'a pas transmise.
+   * Ce ne sont pas des coordonnées géographiques : on sait où est la balise par rapport au repère, pas où est le repère.
+   */
+  eastM?: number | null;
+  northM?: number | null;
 }
+/** Point d'une trajectoire : position relative au repère à un instant observé. */
+export interface TrackPoint {
+  eastM: number;
+  northM: number;
+  observedAt: string;
+  zone: ZoneState;
+  source: BeaconReading['source'];
+}
+/** Les huit directions, dites en clair. */
+export type Bearing = 'nord' | 'nord-est' | 'est' | 'sud-est' | 'sud' | 'sud-ouest' | 'ouest' | 'nord-ouest';
+const BEARINGS: Bearing[] = ['nord', 'nord-est', 'est', 'sud-est', 'sud', 'sud-ouest', 'ouest', 'nord-ouest'];
+/**
+ * Direction d'une position relative au repère. Null si la direction n'a pas de sens : pas de position, ou balise trop près du
+ * repère pour que la précision annoncée permette de dire de quel côté elle se trouve.
+ */
+export function bearingOf(eastM: number | null | undefined, northM: number | null | undefined, accuracyM: number | null | undefined = 0): Bearing | null {
+  if (eastM === null || eastM === undefined || northM === null || northM === undefined) return null;
+  if (Math.hypot(eastM, northM) <= Math.max(3, accuracyM ?? 0)) return null;
+  const deg = (Math.atan2(eastM, northM) * 180) / Math.PI;
+  return BEARINGS[Math.round(((deg + 360) % 360) / 45) % 8]!;
+}
+/** La direction dans une phrase : « vers le nord », « vers l’est ». */
+export const towardText = (b: Bearing): string => (b === 'est' || b === 'ouest' ? `vers l’${b}` : `vers le ${b}`);
+/** La direction comme lieu : « au nord », « à l’est ». */
+export const atBearingText = (b: Bearing): string => (b === 'est' || b === 'ouest' ? `à l’${b}` : `au ${b}`);
 export interface Beacon {
   id: string;
   label: string;
@@ -209,6 +243,27 @@ export interface Beacon {
   outsideSince: string | null;
   silentSeconds: number | null;
   recent: BeaconReading[];
+  /** Trajectoire récente (du plus ancien au plus récent), quand le téléphone transmet sa position relative. */
+  track?: TrackPoint[];
+  /** Vrai si l'appareil s'est enregistré tout seul en ouvrant le lien (suivi automatique) ; sinon balise associée à la main. */
+  auto?: boolean;
+  /** Ce que le navigateur de l'appareil dit être, s'il l'a dit. */
+  kind?: 'PHONE' | 'COMPUTER' | null;
+  /** Vrai si le serveur a reçu une position récente de cet appareil : le repère commun peut être placé sur lui. */
+  canAnchor?: boolean;
+}
+/**
+ * Repère commun de l'organisation, tel qu'on peut le montrer : quand et par quel appareil il a été fixé.
+ * Sa position géographique reste sur le serveur : elle n'est renvoyée à aucun client.
+ */
+export interface BeaconAnchor {
+  setAt: string;
+  byDeviceId: string | null;
+  byLabel: string | null;
+  /** Précision annoncée de la position qui a servi de repère, en mètres. */
+  accuracyM: number | null;
+  /** FIRST_POSITION : première position reçue. MOVED : placé sur un appareil depuis l'écran de l'éleveur. */
+  how: 'FIRST_POSITION' | 'MOVED';
 }
 /** Incident d'éloignement : un épisode « hors zone » d'une balise, avec les faits qui l'ont justifié. */
 export interface IncidentSummary {
@@ -218,6 +273,8 @@ export interface IncidentSummary {
   animalId: string | null;
   openedAt: string;
   closedAt: string | null;
+  /** Pourquoi l'incident est terminé. ANCHOR_MOVED : le repère commun a été déplacé, les distances ont changé de référence. */
+  closeReason?: 'BACK_INSIDE' | 'DEVICE_STOPPED' | 'ANCHOR_MOVED' | null;
   /**
    * E-mail d'alerte de cet incident, tel que le fournisseur d'envoi l'a réellement traité. SENT : accepté par le fournisseur
    * (pas « lu »). FAILED : rien n'est parti. SENDING : pas encore de réponse. Absent ou null : aucun envoi n'a été tenté.
@@ -231,7 +288,7 @@ export interface IncidentData extends IncidentSummary {
   /** Mesure qui a ouvert l'incident. */
   trigger: { observedAt: string; distanceM: number; accuracyM: number | null; source: BeaconReading['source'] };
   maxDistanceM: number;
-  closeReason: 'BACK_INSIDE' | 'DEVICE_STOPPED' | null;
+  closeReason: 'BACK_INSIDE' | 'DEVICE_STOPPED' | 'ANCHOR_MOVED' | null;
   /** État de la balise au moment de la lecture (pas au moment de l'incident). */
   current: Beacon | null;
 }
@@ -243,6 +300,25 @@ export interface BeaconsData {
   alerts: string[];
   /** Vrai si au moins une balise active transmet une distance simulée : bandeau « données simulées » obligatoire. */
   simulated: boolean;
+  /** Repère commun des appareils suivis automatiquement. Null : pas encore fixé (il le sera à la première position reçue). */
+  anchor?: BeaconAnchor | null;
+}
+/** Distance en clair. Au-delà de dix kilomètres (un appareil qui ouvre le lien depuis une autre ville), elle est dite en kilomètres. */
+export const distanceText = (m: number): string => (m >= 10_000 ? `${Math.round(m / 1000)} km` : `${Math.round(m)} m`);
+/** Ancienneté d'une mesure, en clair, à partir du nombre de secondes écoulées depuis sa réception. */
+export const ageText = (seconds: number): string => (seconds < 2 ? 'à l’instant' : seconds < 90 ? `il y a ${seconds} s` : `il y a ${Math.round(seconds / 60)} min`);
+/** Source d'une mesure, telle qu'elle est affichée. */
+export const BEACON_SOURCE_LABELS: Record<BeaconReading['source'], string> = {
+  PHONE_GPS: 'GPS du téléphone',
+  BROWSER_POSITION: 'position du navigateur',
+  SIMULATED: 'distance simulée',
+};
+/** Ce que l'appareil renvoie quand on l'enregistre automatiquement : identifiant, jeton (rendu une seule fois) et nom. */
+export interface AutoDevice {
+  id: string;
+  token: string;
+  label: string;
+  radiusM: number;
 }
 /** Libellé donné à une balise quand l'utilisateur ne l'a pas nommée. */
 export const DEFAULT_BEACON_LABEL = 'Téléphone de démonstration';
@@ -274,6 +350,8 @@ export interface AssistantStatus {
     speech?: boolean;
     /** Conversation en direct : le modèle écoute et répond à la voix, sans étape de transcription. */
     live?: { available: boolean; model: string | null; maxSeconds: number; idleSeconds: number };
+    /** Note vocale en baoulé, par des modèles ouverts exécutés sur le serveur (aucun service en ligne ne sait le baoulé). */
+    baoule?: BaouleStatus;
   };
 }
 
@@ -375,6 +453,49 @@ export interface ObservationAssistReply {
   reply: string;
   /** La phrase nomme un autre animal que celui du formulaire : rien n'est changé pour l'animal, et c'est dit. */
   otherAnimal: string | null;
+}
+
+/** État de la voix en baoulé sur ce serveur. `validated` : les phrases dites ont-elles été validées par un locuteur ? */
+export interface BaouleStatus {
+  /** La voix en baoulé est-elle activée sur ce serveur (BAOULE_VOICE=on) ? Activée ne veut pas dire disponible : le service local de parole doit répondre. */
+  enabled: boolean;
+  available: boolean;
+  reason: string | null;
+  validated: boolean;
+  /** Nombre de formulations enregistrées par un locuteur, qui servent de points de comparaison. */
+  examples: number;
+  /** Moteur d'écoute chargé par le service local (« rapide » ou « origine »), tel qu'il le déclare ; null s'il ne le dit pas. */
+  engine?: string | null;
+}
+export type BaouleIntent = 'situation' | 'changes' | 'missing' | 'beacons';
+/**
+ * Réponse à une note vocale en baoulé. Les faits sont dans `reply` (lecture des données, en français, avec ses preuves) ;
+ * `spoken` est le texte baoulé dit à voix haute, composé de gabarits fixes et de nombres écrits par règle ; `spokenFr` en donne
+ * le sens en français. `heard` est une transcription automatique, à ne pas prendre pour les mots exacts de la personne.
+ */
+export interface BaouleReply {
+  heard: string;
+  intent: BaouleIntent | 'unknown';
+  /** Ressemblance avec la question retenue, de 0 à 1. */
+  score: number;
+  /** Question française à laquelle la note vocale a été rapprochée ; null si elle n'a pas été reconnue. */
+  question: string | null;
+  reply: AssistantReply;
+  spoken: string;
+  spokenFr: string;
+  /**
+   * Réponse dite en baoulé (WAV, base64). Null si la voix a échoué (rien n'a alors été dit), ou si elle a été demandée en
+   * deux temps : `voiceId` permet alors de récupérer le son (`GET /api/assistant/baoule/voix/:id`).
+   */
+  audio: string | null;
+  voiceId?: string | null;
+  /** « voice » : question dite en baoulé puis rapprochée ; « choice » : question choisie (bouton, alerte, question en français). */
+  via?: 'voice' | 'choice';
+  /** Aucune parole dans l'enregistrement : rien n'a été transcrit. */
+  silence?: boolean;
+  validated: boolean;
+  listenMs: number;
+  speakMs: number;
 }
 
 /** Résultat d'une dictée : le texte transcrit, à vérifier par l'utilisateur avant envoi. L'audio n'est pas conservé. */

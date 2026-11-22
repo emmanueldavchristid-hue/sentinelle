@@ -120,6 +120,8 @@ export interface IncidentMailFacts {
   distanceM: number;
   accuracyM: number | null;
   simulated: boolean;
+  /** Source de la mesure, en clair, quand ce n'est ni le GPS d'un téléphone ni une distance simulée (ex. position du navigateur d'un ordinateur). */
+  sourceText?: string;
   /** Instant observé par la balise, déjà formaté à l'heure d'Abidjan. */
   observedAt: string;
 }
@@ -132,7 +134,7 @@ export const incidentLink = (publicUrl: string, incidentId: string) => `${public
 export function incidentMail(n: AlertNotifier, f: IncidentMailFacts): MailMessage {
   const who = `La balise de démonstration « ${f.label} »${f.animalId ? `, associée à ${f.animalId},` : ''}`;
   const measure = `${Math.round(f.distanceM)} m du repère${f.accuracyM ? ` (précision ± ${Math.round(f.accuracyM)} m)` : ''}, pour un seuil de ${f.radiusM} m`;
-  const source = f.simulated ? 'distance SIMULÉE à la main (ce n’est pas une mesure)' : 'GPS du téléphone';
+  const source = f.simulated ? 'distance SIMULÉE à la main (ce n’est pas une mesure)' : (f.sourceText ?? 'GPS du téléphone');
   const link = incidentLink(n.publicUrl, f.incidentId);
   const lines = [
     'Démonstration SENTINELLE VIVANT, données synthétiques.',

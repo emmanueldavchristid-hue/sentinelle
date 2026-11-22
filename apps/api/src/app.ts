@@ -32,9 +32,10 @@ import { findReplay, lock, requestHash, saveReplay } from './idempotency.js';
 import { type AuthConfig, registerAuth, sessionUser } from './auth.js';
 import { registerImport } from './import.js';
 import { registerFarm } from './farm.js';
-import { registerBeacons } from './beacons.js';
+import { forgetSharedReads, registerBeacons, shareBeaconReads } from './beacons.js';
 import { type AssistantOptions, registerAssistant } from './assistant.js';
 import { registerLive } from './live.js';
+import { registerBaoule, type BaouleOptions } from './baoule.js';
 import { maskEmail, type AlertNotifier } from './notify.js';
 import { type StructuringProvider, type SummaryProvider, registerAssist, structuringFromLlm, summaryFromLlm } from './assist.js';
 import type { LlmClient } from './llm.js';
@@ -55,6 +56,10 @@ export interface AppOptions {
   assistant?: AssistantOptions;
   /** E-mail d'alerte d'éloignement : prêt à envoyer (notifier), ou la raison pour laquelle il ne l'est pas. Absent = désactivé. */
   alertEmail?: { notifier: AlertNotifier | null; reason: string | null };
+  /** Voix en baoulé par un service local de parole ; absente ou null = non proposée. */
+  baoule?: BaouleOptions | null;
+  /** Durée (ms) pendant laquelle une lecture des balises est partagée entre tous les écrans d'une organisation. 0 ou absent : chaque demande relit. */
+  beaconReadCacheMs?: number;
   /** Version servie (commit Git relevé au démarrage) : permet de savoir, depuis le lien public, quelle version répond. */
   version?: string;
 }
@@ -81,7 +86,8 @@ export async function buildApp(opts: AppOptions) {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Frame-Options', 'DENY');
-    // Micro : dictée seulement. Position : page « balise » seulement. Toujours sur action explicite de l'utilisateur.
+    // Micro : dictée seulement, sur action explicite. Position : suivi des balises (page « balise », et suivi automatique en mode
+    // démonstration) ; le navigateur demande l'autorisation, et un bandeau dit sur l'appareil qu'il est suivi.
     reply.header('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(self)');
     reply.header(
       'Content-Security-Policy',
@@ -215,9 +221,11 @@ export async function buildApp(opts: AppOptions) {
   registerImport(ctx);
   const notifier = opts.alertEmail?.notifier ?? null;
   const farm = registerFarm(ctx, { emailReady: !!notifier });
+  shareBeaconReads(db, opts.beaconReadCacheMs ?? 0);
   registerBeacons(ctx, notifier);
   const live = registerLive(ctx, farm, opts.assistant?.live ?? null);
-  const assistant = registerAssistant(ctx, farm, { ...(opts.assistant ?? { model: null }), liveStatus: live.status });
+  const baoule = registerBaoule(ctx, farm, opts.baoule ?? null);
+  const assistant = registerAssistant(ctx, farm, { ...(opts.assistant ?? { model: null }), liveStatus: live.status, baouleStatus: baoule.status });
   const llm = opts.llm ?? null;
   const assist = registerAssist(
     { ...ctx, getInvestigation },
@@ -264,6 +272,7 @@ export async function buildApp(opts: AppOptions) {
     }
     const body = (req.body ?? {}) as { withObservation?: unknown };
     await resetAndSeed(db, { withObservation: body.withObservation === true, living: true });
+    forgetSharedReads(db);
     return { ok: true };
   });
 
