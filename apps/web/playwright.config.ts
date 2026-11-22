@@ -24,7 +24,7 @@ export default defineConfig({
     ...(executablePath ? { launchOptions: { executablePath, args: ['--no-sandbox'] } } : { channel: process.env.PW_CHANNEL || undefined }),
   },
   projects: [
-    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec|direct(-question|-confirme|-incident)?\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
+    { name: 'desktop', testIgnore: /auth\.spec|capture\.spec|voix\.spec|direct(-question|-confirme|-incident)?\.spec|saisie-ia\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, viewport: { width: 1440, height: 950 }, ...(executablePath ? { channel: undefined } : {}) } },
     // Dictée avec un faux microphone (fichier WAV de synthèse) et un vrai appel de transcription : seulement si VOIX=1.
     {
       name: 'voix',
@@ -92,6 +92,8 @@ export default defineConfig({
         ...(executablePath ? { channel: undefined } : {}),
       },
     },
+    // Aide à la saisie avec le vrai assistant IA (appel réel) : seulement si SAISIE_IA=1.
+    { name: 'saisie-ia', testMatch: /saisie-ia\.spec/, use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 900 }, ...(executablePath ? { channel: undefined } : {}) } },
     // Capture réelle du parcours (vidéo) : ne s'exécute que si CAPTURE=1 (voir capture.spec.ts), sinon elle est ignorée.
     { name: 'capture', testMatch: /capture\.spec/, use: { ...devices['Desktop Chrome'], storageState: DETAILED, ...(executablePath ? { channel: undefined } : {}) } },
     // Mode authentifié (DEMO_MODE=false) : serveur distinct, compte créé par le script CLI. Commande shell POSIX : ignoré sous Windows.
@@ -107,7 +109,7 @@ export default defineConfig({
       timeout: 60_000,
       // ASSISTANT_AI=off : les tests ne dépendent jamais d'un service d'IA externe (lecture directe des données).
       // La conversation en direct n'est ouverte que pour direct.spec.ts : les autres parcours gardent la dictée.
-      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: process.env.CAPTURE_AI === 'on' || process.env.VOIX === '1' || process.env.DIRECT === '1' ? 'on' : 'off', ...(process.env.DIRECT === '1' ? {} : { GEMINI_LIVE_MODEL: '' }) },
+      env: { PORT: String(PORT), DATA_DIR: 'memory', DEMO_MODE: 'true', ASSISTANT_AI: process.env.CAPTURE_AI === 'on' || process.env.VOIX === '1' || process.env.DIRECT === '1' || process.env.SAISIE_IA === '1' ? 'on' : 'off', ...(process.env.DIRECT === '1' ? {} : { GEMINI_LIVE_MODEL: '' }) },
     },
     ...(process.platform === 'win32'
       ? []

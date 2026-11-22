@@ -733,11 +733,22 @@ export function farmTools(db: Db, opts: { emailReady?: boolean } = {}) {
     // Lieu : explicite, sinon nommé dans le texte, sinon lieu actuel enregistré de l'animal (signalé comme déduit).
     let siteField: DraftField<string>;
     const named = [...sites.values()].filter((s) => text.toLowerCase().includes(s.name.toLowerCase()));
+    // Lieu dit à peu près (« au marché ») : retenu seulement si un SEUL lieu enregistré porte ce mot, et signalé « à vérifier ».
+    const plain = (v: string) =>
+      v
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    const firstWord = (name: string) => plain(name).split(/[^a-z0-9]+/)[0] ?? '';
+    const said = new Set(plain(text).split(/[^a-z0-9]+/));
+    const loose = named.length ? [] : [...sites.values()].filter((s) => firstWord(s.name).length >= 4 && said.has(firstWord(s.name)) && [...sites.values()].filter((o) => firstWord(o.name) === firstWord(s.name)).length === 1);
+    const approx = loose.length === 1 ? { site: loose[0]!, word: (loose[0]!.name.split(/\s+/)[0] ?? '').toLowerCase() } : null;
     // Un lieu fourni par un modèle d'IA n'est retenu que s'il est nommé dans la phrase ; sinon on retombe sur les règles ci-dessous.
     const siteGiven = p.siteId && !(p.fromAssistant && !named.some((s) => s.id === p.siteId)) ? p.siteId : undefined;
     if (siteGiven) siteField = sites.has(siteGiven) ? { value: siteGiven, status: 'OK', message: null } : { value: null, status: 'MISSING', message: 'Lieu inconnu dans votre périmètre.' };
     else if (named.length === 1) siteField = { value: named[0]!.id, status: 'OK', message: null };
     else if (named.length > 1) siteField = { value: null, status: 'AMBIGUOUS', message: 'Plusieurs lieux sont nommés. Choisissez le lieu de l’observation.', candidates: named.map((s) => ({ id: s.id, label: s.name })) };
+    else if (approx) siteField = { value: approx.site.id, status: 'DEDUCED', message: `« ${approx.word} » : ${approx.site.name} est le seul lieu enregistré qui correspond. À vérifier.` };
     else if (chosen?.currentSiteId) siteField = { value: chosen.currentSiteId, status: 'DEDUCED', message: `Lieu non précisé : ${siteName(sites, chosen.currentSiteId)}, lieu actuel enregistré de l’animal, est proposé. À vérifier.` };
     else siteField = { value: null, status: 'MISSING', message: chosen ? `Aucun lieu actuel n’est enregistré pour ${chosen.tag} : choisissez le lieu de l’observation.` : 'Choisissez le lieu de l’observation.' };
 

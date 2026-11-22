@@ -55,6 +55,7 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - `ASSISTANT_AI=off` coupe l'assistant IA (lecture directe des données) ; les tests de navigateur tournent ainsi.
 - Sous Windows : `PW_CHANNEL=chrome pnpm e2e` (Chrome installé). Après `pnpm build`, redémarrer le serveur (les fichiers compilés sont listés au démarrage).
 - Conversation en direct, appels réels à l'API Live avec un faux micro : `DIRECT=1 PW_CHANNEL=chrome pnpm --filter @sentinelle/web exec playwright test --project=direct --project=direct-question --project=direct-confirme --project=direct-incident`.
+- Aide à la saisie avec le vrai assistant IA : `SAISIE_IA=1 PW_CHANNEL=chrome pnpm --filter @sentinelle/web exec playwright test --project=saisie-ia`.
 - Tester sans toucher la version servie : compiler ailleurs (`vite build --outDir <dossier>`) et lancer Playwright avec `WEB_DIST=<dossier>`. Version servie : `GET /api/health` (`version`). Version de secours : étiquette `stable-2026-11-21`, dossier voisin `sentinelle-secours`, `lancer-secours.bat`.
 - `pnpm db:backup` / `db:restore` (serveur arrêté) · `pnpm user:list|disable|enable` · `pnpm --filter @sentinelle/api test:pg` (TEST_DATABASE_URL)
 - CI : `.github/workflows/ci.yml` · Docker : `Dockerfile`
@@ -70,6 +71,7 @@ Scripts portables (Node/pnpm), pas de bash obligatoire.
 - Temps : UTC stocké, affichage `Africa/Abidjan`, intervalles `[début, fin)`, précision explicite,
   jamais de minuit implicite, heure d'événement ≠ heure de saisie.
 - Moteur : mêmes données + paramètres → mêmes résultats ; cycles, profondeur, plafond, déduplication.
+- Aide à la saisie d'une observation : le formulaire est rempli automatiquement, jamais enregistré ; ce que le modèle propose est recoupé avec la phrase (ni heure, ni lieu, ni « date inconnue » que la personne n'a pas dits) ; l'animal reste celui du formulaire.
 - Assistant : faits issus des fonctions de `farm.ts` uniquement, cinq natures d'information étiquetées, trois dates distinguées, aucune écriture sans brouillon puis confirmation, aucun faux temps réel.
 - Balises : toujours « la balise associée à tel animal », jamais « l'animal s'évade » ; source de la mesure (GPS du téléphone ou simulée) affichée partout. Un éloignement ouvre un seul incident par épisode ; l'e-mail d'alerte est facultatif, désactivé par défaut, un seul par épisode, vers un destinataire fixé côté serveur, et l'écran n'affiche que ce que le fournisseur a répondu (« accepté », jamais « lu ») ; la distance vient du téléphone, pas d'une mesure radio.
 - Conversation en direct : semi-duplex ; le modèle n'écrit rien ; « je confirme » est jugé par une règle fixe sur la phrase entendue, pour un brouillon précis, une seule fois ; ne jamais dire que la parole en direct est validée phrase par phrase.

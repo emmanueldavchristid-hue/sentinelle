@@ -360,6 +360,23 @@ export function isSpokenCancellation(t: string): boolean {
   return n.length > 0 && n.length <= 40 && CANCEL_WORDS.test(n);
 }
 
+/**
+ * Aide à la saisie d'une observation (formulaire « Nouvelle observation ») : la phrase de l'utilisateur, écrite ou dictée,
+ * devient une PROPOSITION de champs. Rien n'est enregistré : le formulaire est rempli, l'utilisateur vérifie puis valide.
+ */
+export interface ObservationAssistReply {
+  /** « ai » : un modèle a lu la phrase. « direct » : lecture par règles fixes, sans IA. Toujours annoncé. */
+  mode: 'direct' | 'ai';
+  provider: string | null;
+  notice: string;
+  /** Les champs proposés, avec leur statut (dit, proposé, à confirmer, manquant). */
+  result: ToolResult<ObservationDraftData>;
+  /** Réponse de l'assistant dans le volet : ce qui a été rempli, ce qui reste à indiquer. Composée par le serveur à partir des champs. */
+  reply: string;
+  /** La phrase nomme un autre animal que celui du formulaire : rien n'est changé pour l'animal, et c'est dit. */
+  otherAnimal: string | null;
+}
+
 /** Résultat d'une dictée : le texte transcrit, à vérifier par l'utilisateur avant envoi. L'audio n'est pas conservé. */
 export interface TranscriptionReply {
   text: string;

@@ -132,13 +132,35 @@ test('scanner QR : repli explicite si le navigateur ne le permet pas ; QR prése
   else await expect(page.getByText(/ne permet pas la lecture de QR code/)).toBeVisible();
 });
 
-test('aide IA désactivée sans fournisseur : message clair, saisie manuelle intacte', async ({ page }) => {
+test('aide à la saisie sans assistant IA : la phrase remplit le formulaire par règles fixes, rien n’est enregistré sans validation', async ({ page }) => {
+  await reset(page, false);
   await role(page, /Agent de terrain/);
   await page.getByRole('link', { name: /B-017/ }).click();
   await page.getByRole('button', { name: 'Nouvelle observation' }).click();
-  await page.getByText('Aide à la saisie (IA, facultative)').click();
-  await expect(page.getByText(/Aide IA désactivée : aucun fournisseur n’est configuré/)).toBeVisible();
-  await expect(page.getByLabel('Observation', { exact: true })).toBeEditable();
+  // Le volet est ouvert d'emblée et dit comment la phrase sera lue (ici : sans IA).
+  await expect(page.getByText('Sans assistant IA sur ce serveur : la phrase est lue par des règles fixes.')).toBeVisible();
+  await page.getByLabel('Votre observation, en une phrase').fill('Tousse légèrement ce matin à Élevage A');
+  await page.getByRole('button', { name: 'Remplir le formulaire' }).click();
+
+  // L'assistant répond dans le volet : ce qu'il a rempli, ce qu'il n'a pas supposé.
+  const reply = page.getByRole('status', { name: 'Réponse de l’aide à la saisie' });
+  await expect(reply).toContainText('J’ai rempli le lieu (Élevage A), le moment');
+  await expect(reply).toContainText('Aucune heure n’a été dite : je n’en ai pas supposé.');
+  await expect(reply).toContainText('rien n’est enregistré tant que vous n’avez pas validé');
+
+  // Les champs du formulaire sont remplis automatiquement, et signalés comme tels.
+  await expect(page.getByLabel('Lieu', { exact: true })).toHaveValue('A');
+  await expect(page.getByLabel('Jour seulement')).toBeChecked();
+  await expect(page.getByLabel('Date', { exact: true })).toHaveValue(new Date().toISOString().slice(0, 10));
+  await expect(page.getByLabel('Observation', { exact: true })).toHaveValue(/Tousse légèrement/);
+  await expect(page.getByText('Rempli par l’aide à la saisie. Relisez')).toBeVisible();
+
+  // Reprendre un champ à la main retire son signalement ; l'enregistrement passe par le chemin habituel.
+  await page.getByLabel('Observation', { exact: true }).fill('Tousse légèrement, constaté ce matin');
+  await expect(page.getByText('Rempli par l’aide à la saisie. Relisez')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Enregistrer sur l’appareil' }).click();
+  await expect(page).toHaveURL(/#\/envois/);
+  await expect(page.getByText('Tousse légèrement, constaté ce matin')).toBeVisible();
 });
 
 test('synthèse déterministe dans la console, rapport imprimable complet', async ({ page }) => {

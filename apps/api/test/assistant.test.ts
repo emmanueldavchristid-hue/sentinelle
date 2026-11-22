@@ -1,9 +1,9 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AssistantReply, ChangesData, ObservationDraftData, ToolResult } from '@sentinelle/contracts';
+import type { AssistantReply, ChangesData, ObservationAssistReply, ObservationDraftData, ToolResult } from '@sentinelle/contracts';
 import { buildApp } from '../src/app.js';
-import { recognize } from '../src/assistant.js';
+import { mentionsDiagnosisOrTreatment, recognize, saysDateUnknown } from '../src/assistant.js';
 import { checkAssistantConfig } from '../src/config.js';
 import { type Db, migrate } from '../src/db.js';
 import { GeminiError, geminiModel, listGeminiModels, pcmToWav, type AssistantModel } from '../src/gemini.js';
@@ -458,5 +458,170 @@ describe('Client Gemini (format des requêtes vérifié contre un faux serveur H
     expect((err as GeminiError).message).toMatch(/Quota Gemini atteint/);
     expect((err as GeminiError).message).not.toContain(FAKE_KEY);
     mode = 'tools';
+  });
+});
+
+describe('Aide à la saisie du formulaire d’observation : la phrase remplit les champs, rien n’est enregistré', () => {
+  const model = (run: AssistantModel['runWithTools']): AssistantModel => ({ provider: 'Faux modèle', model: 'test', runWithTools: run });
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const assist = async (app: Awaited<ReturnType<typeof buildApp>>, payload: Record<string, unknown>, headers: Record<string, string> = FARMER) => {
+    const r = await app.inject({ method: 'POST', url: '/api/assistant/observation', headers, payload });
+    return { status: r.statusCode, body: r.json() as ObservationAssistReply };
+  };
+  const countObservations = async () => Number((await db.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM observations')).rows[0]!.n);
+
+  it('avec l’IA : champs proposés par le modèle, recoupés avec la phrase ; l’animal reste celui du formulaire', async () => {
+    const before = await countObservations();
+    let system = '';
+    const app = await buildApp({
+      db,
+      demoMode: true,
+      assistant: {
+        model: model(async (i) => {
+          system = i.system;
+          expect(i.tools.map((t) => t.name)).toEqual(['prepare_observation']);
+          // Le modèle invente une heure, un lieu non nommé et un autre animal : rien de cela ne doit être retenu.
+          await i.callTool('prepare_observation', { note: 'Mange moins depuis ce matin', date: today, time: '08:00', siteId: 'E', animalId: 'B-044' });
+          return { text: 'OK', calls: [{ name: 'prepare_observation', args: {} }] };
+        }),
+      },
+    });
+    const { status, body } = await assist(app, { text: 'Elle mange moins depuis ce matin', animalId: 'B-017' });
+    expect(status).toBe(200);
+    expect(body.mode).toBe('ai');
+    expect(body.provider).toBe('Faux modèle (test)');
+    expect(body.notice).toMatch(/recoupée avec votre phrase/);
+    expect(system).toMatch(/Animal du formulaire : B-017/);
+    const d = body.result.data;
+    expect(d.animal.value).toBe('B-017');
+    expect(body.otherAnimal).toBeNull();
+    expect(d.note.value).toBe('Mange moins depuis ce matin');
+    expect(d.eventTime.value).toEqual({ precision: 'DAY', date: today });
+    // Lieu : celui que le modèle avance n'est pas dans la phrase ; c'est le lieu actuel enregistré qui est proposé, signalé comme tel.
+    expect(d.site).toMatchObject({ value: 'C', status: 'DEDUCED' });
+    expect(body.reply).toMatch(/^J’ai rempli le lieu \(Élevage C, proposé, à vérifier\), le moment \(\d{2}\/\d{2}\/\d{4}, à confirmer\) et l’observation\./);
+    expect(body.reply).toMatch(/Aucune heure n’a été dite : je n’en ai pas supposé\./);
+    expect(body.reply).toMatch(/rien n’est enregistré tant que vous n’avez pas validé\.$/);
+    expect(body.reply).not.toMatch(/08/);
+    expect(await countObservations()).toBe(before);
+    await app.close();
+  });
+
+  it('lieu et heure dits dans la phrase : retenus', async () => {
+    const app = await buildApp({
+      db,
+      demoMode: true,
+      assistant: {
+        model: model(async (i) => {
+          await i.callTool('prepare_observation', { note: 'Tousse', date: yesterday, time: '07:30', siteId: 'A' });
+          return { text: 'OK', calls: [] };
+        }),
+      },
+    });
+    const { body } = await assist(app, { text: 'Tousse hier à 7h30 à Élevage A', animalId: 'B-017' });
+    const d = body.result.data;
+    expect(d.site).toMatchObject({ value: 'A', status: 'OK' });
+    expect(d.eventTime.value).toEqual({ precision: 'INSTANT', at: `${yesterday}T07:30:00.000Z` });
+    expect(body.reply).toMatch(/le lieu \(Élevage A\)/);
+    expect(body.reply).not.toMatch(/Aucune heure/);
+    await app.close();
+  });
+
+  it('le modèle ne propose rien, ou tombe en panne : lecture par règles fixes, et c’est dit', async () => {
+    const silent = await buildApp({ db, demoMode: true, assistant: { model: model(async () => ({ text: 'Je ne sais pas.', calls: [] })) } });
+    const a = await assist(silent, { text: 'Boite légèrement ce matin', animalId: 'B-017' });
+    expect(a.body.mode).toBe('direct');
+    expect(a.body.provider).toBeNull();
+    expect(a.body.notice).toMatch(/n’a pas proposé de champs : la phrase a été lue par des règles fixes/);
+    expect(a.body.result.data.eventTime.value).toEqual({ precision: 'DAY', date: today });
+    expect(a.body.result.data.note.value).toMatch(/Boite légèrement/);
+    await silent.close();
+
+    const broken = await buildApp({
+      db,
+      demoMode: true,
+      assistant: {
+        model: model(async () => {
+          throw new GeminiError(429, 'RESOURCE_EXHAUSTED', 'Quota Gemini atteint (429).');
+        }),
+      },
+    });
+    const b = await assist(broken, { text: 'Boite légèrement ce matin', animalId: 'B-017' });
+    expect(b.status).toBe(200);
+    expect(b.body.mode).toBe('direct');
+    expect(b.body.notice).toMatch(/^Quota Gemini atteint \(429\)\. La phrase a été lue par des règles fixes/);
+    expect(b.body.result.data.note.value).toMatch(/Boite légèrement/);
+    await broken.close();
+  });
+
+  it('sans assistant IA : le volet fonctionne quand même, par règles fixes', async () => {
+    const app = await buildApp({ db, demoMode: true });
+    const { status, body } = await assist(app, { text: 'Tousse légèrement ce matin à Élevage A', animalId: 'B-017' });
+    expect(status).toBe(200);
+    expect(body.mode).toBe('direct');
+    expect(body.notice).toMatch(/^Sans assistant IA sur ce serveur/);
+    expect(body.result.data.site).toMatchObject({ value: 'A', status: 'OK' });
+    expect(body.result.data.eventTime.value).toEqual({ precision: 'DAY', date: today });
+    expect(body.reply).toMatch(/J’ai rempli le lieu \(Élevage A\), le moment/);
+    await app.close();
+  });
+
+  it('la phrase nomme un autre animal : le formulaire garde le sien, et la réponse le dit', async () => {
+    const app = await buildApp({ db, demoMode: true });
+    const { body } = await assist(app, { text: 'B-044 tousse ce matin', animalId: 'B-017' });
+    expect(body.otherAnimal).toBe('B-044');
+    expect(body.reply).toMatch(/Votre phrase nomme B-044, mais ce formulaire concerne B-017 : je n’ai pas changé l’animal\./);
+    await app.close();
+  });
+
+  it('lieu dit à peu près, date « inconnue » avancée par le modèle, diagnostic dans la phrase', async () => {
+    const app = await buildApp({
+      db,
+      demoMode: true,
+      assistant: {
+        model: model(async (i) => {
+          // Le modèle déclare la date inconnue alors que la personne ne l'a pas dit, et ne propose aucun lieu.
+          await i.callTool('prepare_observation', { note: i.user, dateUnknown: true });
+          return { text: 'OK', calls: [] };
+        }),
+      },
+    });
+    // « au marché » : un seul lieu enregistré porte ce mot. Il est proposé, signalé à vérifier, à la place du lieu actuel de l'animal.
+    const market = await assist(app, { text: 'Elle boite, je l’ai vue au marché', animalId: 'B-017' });
+    expect(market.body.result.data.site).toMatchObject({ value: 'M', status: 'DEDUCED' });
+    expect(market.body.result.data.site.message).toMatch(/« marché » : Marché M est le seul lieu enregistré qui correspond/);
+    expect(market.body.reply).toMatch(/le lieu \(Marché M, proposé, à vérifier\)/);
+    // « élevage » désigne plusieurs lieux : rien n'est deviné, on retombe sur le lieu actuel enregistré.
+    const farm = await assist(app, { text: 'Elle boite, vue à l’élevage', animalId: 'B-017' });
+    expect(farm.body.result.data.site.message).toMatch(/lieu actuel enregistré de l’animal/);
+    // La date n'est pas « inconnue » parce que le modèle le dit : elle reste à indiquer.
+    expect(market.body.result.data.eventTime.value).toBeNull();
+    expect(market.body.reply).toMatch(/Il reste à indiquer le moment\./);
+    expect(market.body.reply).not.toMatch(/ne pas connaître la date/);
+    const unknown = await assist(app, { text: 'Elle boite, je ne sais pas depuis quand', animalId: 'B-017' });
+    expect(unknown.body.result.data.eventTime.value).toEqual({ precision: 'UNKNOWN' });
+    expect(unknown.body.reply).toMatch(/le moment \(vous dites ne pas connaître la date\)/);
+    // Diagnostic ou traitement dans la phrase : l'assistant le rappelle, sans rien affirmer lui-même.
+    const sick = await assist(app, { text: 'Je crois qu’elle a la fièvre aphteuse, donne-lui des antibiotiques', animalId: 'B-017' });
+    expect(sick.body.reply).toMatch(/je ne pose pas de diagnostic et je ne prescris rien/);
+    expect(market.body.reply).not.toMatch(/diagnostic/);
+    await app.close();
+
+    expect(saysDateUnknown('Je ne sais pas quand')).toBe(true);
+    expect(saysDateUnknown('date inconnue')).toBe(true);
+    expect(saysDateUnknown('Elle mange moins depuis ce matin')).toBe(false);
+    expect(saysDateUnknown('Je ne sais pas si elle a mangé')).toBe(false);
+    expect(mentionsDiagnosisOrTreatment('Elle tousse légèrement')).toBe(false);
+    expect(mentionsDiagnosisOrTreatment('Quel traitement lui donner ?')).toBe(true);
+  });
+
+  it('entrées refusées : texte trop court, animal inconnu, animal d’une autre organisation', async () => {
+    const app = await buildApp({ db, demoMode: true });
+    expect((await assist(app, { text: 'a', animalId: 'B-017' })).status).toBe(400);
+    expect((await assist(app, { text: 'Tousse ce matin', animalId: 'X-999' })).status).toBe(404);
+    expect((await assist(app, { text: 'Tousse ce matin', animalId: 'B-017' }, { 'x-demo-user': 'U-VET-AUTRE' })).status).toBe(404);
+    expect((await app.inject({ method: 'POST', url: '/api/assistant/observation', payload: { text: 'Tousse ce matin', animalId: 'B-017' } })).statusCode).toBe(401);
+    await app.close();
   });
 });
