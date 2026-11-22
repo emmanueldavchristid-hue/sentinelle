@@ -652,6 +652,15 @@ describe('Suivi automatique : ouvrir le lien suffit, repère commun, distance ca
     // Passée la durée, la lecture est refaite.
     await new Promise((r) => setTimeout(r, 450));
     expect((await read()).asOf).not.toBe(after.asOf);
+    // Réinitialiser la démonstration efface aussi la lecture partagée : aucune balise d'avant ne reste affichée, même une seconde.
+    const other = (await shared.inject({ method: 'POST', url: '/api/devices/auto', payload: { kind: 'PHONE' } })).json() as { id: string; token: string };
+    expect((await shared.inject({ method: 'POST', url: `/api/devices/${other.id}/position`, headers: { 'x-device-token': other.token }, payload: { accuracyM: 5, observedAt: new Date().toISOString(), ...at(900, 500) } })).statusCode).toBe(201);
+    await new Promise((r) => setTimeout(r, 450));
+    expect((await read()).data.alerts).toEqual([other.id]);
+    expect((await shared.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset' }, payload: { withObservation: false } })).statusCode).toBe(200);
+    const fresh = await read();
+    expect(fresh.data.alerts).toEqual([]);
+    expect(fresh.data.beacons).toEqual([]);
     await shared.close();
     shareBeaconReads(db, 0); // la base est partagée avec les autres tests : chacun relit de nouveau
   });

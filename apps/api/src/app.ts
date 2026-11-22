@@ -32,7 +32,7 @@ import { findReplay, lock, requestHash, saveReplay } from './idempotency.js';
 import { type AuthConfig, registerAuth, sessionUser } from './auth.js';
 import { registerImport } from './import.js';
 import { registerFarm } from './farm.js';
-import { registerBeacons, shareBeaconReads } from './beacons.js';
+import { forgetSharedReads, registerBeacons, shareBeaconReads } from './beacons.js';
 import { type AssistantOptions, registerAssistant } from './assistant.js';
 import { registerLive } from './live.js';
 import { registerBaoule, type BaouleOptions } from './baoule.js';
@@ -272,6 +272,7 @@ export async function buildApp(opts: AppOptions) {
     }
     const body = (req.body ?? {}) as { withObservation?: unknown };
     await resetAndSeed(db, { withObservation: body.withObservation === true, living: true });
+    forgetSharedReads(db);
     return { ok: true };
   });
 

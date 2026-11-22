@@ -305,13 +305,16 @@ export function beaconSentence(b: Beacon): Statement {
  * Pendant `ms` millisecondes, tous ceux d'une même organisation reçoivent donc LA MÊME lecture, avec son instant réel
  * (`asOf`) : ce n'est pas un faux temps réel, seulement une lecture faite une fois au lieu de vingt. Désactivée (0) par
  * défaut et dans les tests ; le serveur l'active (BEACONS_READ_CACHE_MS, 1000 par défaut). Une action de l'éleveur
- * (associer, arrêter, déplacer le repère) l'efface aussitôt, pour qu'il voie son effet sans attendre.
+ * (associer, arrêter, déplacer le repère) l'efface aussitôt, pour qu'il voie son effet sans attendre ; la réinitialisation
+ * de la démonstration aussi (sans cela, l'alerte d'une balise effacée restait affichée jusqu'à la relecture suivante).
  */
 const sharedReads = new WeakMap<Db, { ms: number; byOrg: Map<string, { at: number; value: Promise<ToolResult<BeaconsData>> }> }>();
 export function shareBeaconReads(db: Db, ms: number) {
   sharedReads.set(db, { ms: Math.max(0, Math.min(5000, Math.floor(ms) || 0)), byOrg: new Map() });
 }
 const forgetSharedRead = (db: Db, orgId: string) => void sharedReads.get(db)?.byOrg.delete(orgId);
+/** À appeler quand toutes les balises changent d'un coup (réinitialisation de la démonstration) : aucune lecture d'avant ne doit ressortir. */
+export const forgetSharedReads = (db: Db) => void sharedReads.get(db)?.byOrg.clear();
 
 export function beaconFunctions(db: Db, alerts: { emailReady?: boolean } = {}) {
   const raw = rawOf(db);
