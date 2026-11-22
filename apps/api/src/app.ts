@@ -84,7 +84,8 @@ export async function buildApp(opts: AppOptions) {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Frame-Options', 'DENY');
-    // Micro : dictée seulement. Position : page « balise » seulement. Toujours sur action explicite de l'utilisateur.
+    // Micro : dictée seulement, sur action explicite. Position : suivi des balises (page « balise », et suivi automatique en mode
+    // démonstration) ; le navigateur demande l'autorisation, et un bandeau dit sur l'appareil qu'il est suivi.
     reply.header('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(self)');
     reply.header(
       'Content-Security-Policy',
