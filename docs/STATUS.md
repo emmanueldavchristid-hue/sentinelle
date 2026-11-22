@@ -4,7 +4,7 @@ Brief de référence : `docs/BRIEF_SENTINELLE_VIVANT.md`. Mot-clé `REPRISE` : l
 
 ## Dernier point de contrôle
 - Date : 2026-11-22, vers 17 h (Africa/Abidjan). Session Claude Code **en ligne** (conteneur Linux), ouverte par Yvan depuis son téléphone : **le PC était éteint**.
-- **Branche : `claude/baoule-balise-improvements-wwf2je`**, poussée ; demande de fusion n° 2 en brouillon vers `sentinelle-vivant`. Aucune fusion. Intégration continue verte sur le commit `c08e6c4` (avant les balises automatiques ; à relire sur le dernier commit).
+- **Branche : `claude/baoule-balise-improvements-wwf2je`**, poussée ; demande de fusion n° 2 en brouillon vers `sentinelle-vivant`. Aucune fusion. Intégration continue verte sur `6b03662`, dernier commit de code (tests, PostgreSQL serveur, navigateur, image Docker). Elle avait échoué une fois, sur `70528b3` : après une réinitialisation, la lecture partagée des balises servait encore l'alerte d'une balise effacée ; reproduit par un test puis corrigé.
 - Contenu, dans l'ordre : (1) le suivi GPS et la note vocale en baoulé du PC, **rejoués à partir de l'historique de la session du PC** (la branche locale `sentinelle-baoule-gps` n'avait jamais été poussée) ; (2) la voix en baoulé améliorée ; (3) les balises automatiques (tout appareil qui ouvre le lien est suivi).
 - Demande de Yvan (22/11, 15 h 11) : améliorer le baoulé (« il prend le temps avant de transcrire, ou il ne transcrit même pas, et il ne répond pas ; prends la même voix et intègre-la »), et « tout appareil disposant du lien doit être considéré automatiquement comme balise », avec un repère pris tout seul et un suivi qui ne stagne pas.
 - **Rien de cette session n'est servi** : le serveur, le tunnel et les modèles de parole sont sur le PC.
