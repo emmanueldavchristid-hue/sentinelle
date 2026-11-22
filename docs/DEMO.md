@@ -47,7 +47,7 @@ Phrases reconnues sans IA (mode direct) : « Qu'est-ce qui a changé depuis hier
 - **Écran blanc après une recompilation** : relancer le serveur, puis recharger la page deux fois.
 - **Serveur arrêté** : relancer `pnpm demo` (les données persistent dans `data/pglite`).
 - **Base corrompue** : arrêter le serveur, supprimer le dossier `data/`, relancer `pnpm demo`.
-- Vidéo de secours : **non enregistrée** à ce jour.
+- Vidéo de secours : `docs/captures/parcours-vivant.webm`, capture réelle du parcours écrit, sans IA, en une prise, réenregistrée le 22/11 sur la version actuelle (question, sources, fiche, brouillon, confirmation, reçu, réponse mise à jour, explication ; muette, format WebM, affichage détaillé). `parcours-vivant-ia.webm` date du 21/11 (version précédente, avec Gemini). Aucune vidéo de la conversation en direct ni de l'incident de balise n'est enregistrée ; aucune vidéo montée ni MP4.
 
 ## Limites à annoncer
 - Données synthétiques ; aucune intégration réelle ; aucun capteur posé sur un animal. La seule mesure automatique est la balise de démonstration (un téléphone), relue toutes les 4 secondes. Sa distance est calculée par le téléphone à partir de son GPS et d'un repère : ce n'est pas une mesure radio de proximité avec l'ordinateur, et en intérieur la précision du GPS donne souvent « incertain ». Pas d'e-mail ni de notification : l'alerte est dans l'application.

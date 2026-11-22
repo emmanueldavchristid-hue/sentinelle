@@ -77,6 +77,8 @@ Téléphone autorisé, position reçue, éloignement affiché, incident expliqu�
 - Navigateur sans IA : **17/17** (`PW_CHANNEL=chrome`, application compilée à part pour ne pas toucher la version servie).
 - Appels RÉELS à l'API Live, faux micro : `DIRECT=1 PW_CHANNEL=chrome pnpm --filter @sentinelle/web exec playwright test --project=direct --project=direct-question --project=direct-confirme --project=direct-incident` : **4/4** ; panne du fournisseur (`GEMINI_LIVE_MODEL=modele-inexistant`) : 1/1.
 - `pnpm assistant:check` : texte, appels de fonctions et conversation en direct opérationnels ; synthèse vocale indisponible (quota du jour atteint).
+- Capture vidéo du parcours écrit, sans IA, réenregistrée sur cette version : `docs/captures/parcours-vivant.webm` (`CAPTURE=1`, 1/1). Elle n'a pas été visionnée après l'enregistrement.
+- Version servie contrôlée par le lien public après redémarrage : santé, page, données, et une conversation en direct complète (question comprise, lecture réelle, voix reçue, premier son 2,4 s après la fin de la phrase).
 - **Tests humains : aucun.** Protocole court dans `docs/ESSAIS.md`.
 - **Test de performance du moteur** (`packages/domain`, « 2 000 animaux, 20 lieux : calcul sous 2 s ») : 3 passages isolés le 22/11 : 1 réussi, 2 à 2,01 et 2,06 s. Scénario : moteur d'enquête du vétérinaire sur un jeu synthétique de 2 000 animaux, pas le parcours de l'éleveur (8 animaux). Matériel : Intel Core i7-4800MQ (2013), avec le serveur, le tunnel et Chrome en marche. Impact sur la démonstration : aucun. Ni le seuil ni le moteur n'ont été modifiés.
 
