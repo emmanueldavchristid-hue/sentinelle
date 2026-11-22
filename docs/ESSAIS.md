@@ -30,6 +30,17 @@ Avant de commencer : `pnpm assistant:check` (les étapes 2, 3 et 5 doivent dire 
 9. **Arrêter** la balise depuis l'ordinateur : le téléphone l'indique.
 10. Sur le téléphone, essayer aussi le bouton **Parler** (micro du téléphone, réseau mobile ou Wi-Fi) et noter le délai.
 
+## Suivi automatique des appareils (lien https du tunnel, dehors si possible)
+Vérifié seulement avec deux navigateurs à position émulée. À faire avec de vrais téléphones :
+1. Réinitialiser la démonstration. Ouvrir le lien sur un premier téléphone, dehors, et accepter la position. Le bandeau « Cet appareil est suivi comme balise « Téléphone 1 » » doit apparaître ; sur l'ordinateur, « Téléphone 1 » apparaît tout seul, à 0 m, et l'écran dit qu'il a fixé le repère.
+2. Ouvrir le lien sur un second téléphone : « Téléphone 2 » apparaît sans aucune action. Noter la précision annoncée de chacun.
+3. Marcher avec le second téléphone, écran allumé. Sur l'ordinateur, sa distance et sa trajectoire doivent suivre, sans rester figées. Noter le retard ressenti, et toute période où le point ne bouge pas alors que la personne marche.
+4. Rester immobile une minute : le téléphone doit-il devenir « muet » ? Noter après combien de temps, sur iPhone et sur Android.
+5. Dépasser le seuil : l'alerte, puis « Comprendre avec Sentinelle ». Revenir : « Incident terminé ».
+6. Sur un téléphone, « Arrêter le suivi », puis « Reprendre le suivi ». Depuis l'ordinateur, « Arrêter » un appareil : il ne doit pas revenir de lui-même.
+7. Ouvrir le lien sur l'ordinateur lui-même en acceptant la position : noter la précision annoncée (« position du navigateur »). Essayer « Placer le repère sur cet appareil » sur un téléphone.
+8. Verrouiller un téléphone 30 secondes, puis le rallumer : le suivi doit reprendre sans rien toucher.
+
 ## Voix en baoulé (service de parole lancé, `BAOULE_VOICE=on`)
 Rien de ce qui suit n'a été essayé avec les vrais modèles depuis les changements du 22/11 au soir.
 1. Sur le PC : `pnpm baoule:check`. Noter le moteur d'écoute affiché, les temps d'écoute, et « x/8 questions retrouvées ». Relancer le service de parole avec `BAOULE_STT_ENGINE=origine`, refaire le contrôle, et garder le moteur qui retrouve le plus de questions.
@@ -40,6 +51,7 @@ Rien de ce qui suit n'a été essayé avec les vrais modèles depuis les changem
 6. Lui faire écouter les réponses et relire `apps/api/src/baoule-phrases.ts`. Point à lui soumettre : la phrase de la balise dit aujourd'hui « un animal est parti loin » ; avec les appareils suivis automatiquement, il faudrait dire « une balise » ou « un appareil ».
 
 ## Ce qu'il faut me rapporter
+- Suivi automatique : appareils et navigateurs essayés, précision annoncée, retard ressenti, moments où un point reste figé.
 - Baoulé : moteur d'écoute retenu, délais réels, questions reconnues avec une vraie voix, son entendu ou non sur chaque téléphone.
 - Délai ressenti avant la réponse parlée (mesuré avec un faux micro : environ 2 secondes sur l'ordinateur, 2,5 secondes par le tunnel).
 - Écho ou coupures, sur haut-parleurs et sur casque.
