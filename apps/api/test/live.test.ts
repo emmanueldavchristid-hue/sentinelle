@@ -4,7 +4,7 @@ import { type RawData, WebSocket, WebSocketServer } from 'ws';
 import { spokenConfirmation, type LiveServerMessage, type ObservationDraftData, type ToolResult } from '@sentinelle/contracts';
 import { buildApp } from '../src/app.js';
 import { type Db, migrate } from '../src/db.js';
-import { draftSentence, type LiveOptions } from '../src/live.js';
+import { draftSentence, spokenDate, type LiveOptions } from '../src/live.js';
 import { resetAndSeed } from '../src/seed.js';
 import { openTestDb } from './helpers.js';
 
@@ -168,6 +168,8 @@ describe('Conversation en direct : un tour de lecture', () => {
     expect(JSON.stringify(fr.response)).not.toMatch(/\[(?:OBS|REC|TASK):/);
 
     const result = await until(() => b.of('result')[0], 'lecture envoyée à l’écran');
+    // La fin de tour annoncée par le service juste après l'appel de fonction n'est pas la fin de l'échange.
+    expect(b.of('turn_complete')).toHaveLength(0);
     expect(result.turn).toBe(1);
     expect(result.result.tool).toBe('changes');
     expect(result.result.sources.length).toBeGreaterThan(0);
@@ -179,6 +181,8 @@ describe('Conversation en direct : un tour de lecture', () => {
     provider.emit({ serverContent: { generationComplete: true } });
     provider.emit({ serverContent: { turnComplete: true } });
     await until(() => b.of('turn_complete').length === 1, 'fin du tour');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(b.of('turn_complete')).toHaveLength(1);
     expect(Buffer.concat(b.audio).equals(voice)).toBe(true);
     expect(b.of('said')[0]).toEqual({ type: 'said', turn: 1, text: 'Sept enregistrements ont été reçus depuis hier.' });
 
@@ -258,8 +262,8 @@ describe('Conversation en direct : brouillon et confirmation', () => {
     expect(d1.response.ready).toBe(true);
     expect(String(d1.response.say)).toMatch(/Brouillon préparé\. Rien n’est enregistré/);
     expect(String(d1.response.say)).toMatch(/Animal : B-017/);
-    expect(String(d1.response.say)).toMatch(/dites « je confirme »/);
-    expect(String(d1.response.say)).not.toMatch(/08[:h]00/);
+    expect(String(d1.response.say)).toMatch(/Date : aujourd’hui, à confirmer\. Constat : Mange moins depuis ce matin\. Dites « je confirme », ou « non »\.$/);
+    expect(String(d1.response.say)).not.toMatch(/08|8 heures/);
     const draft = (await until(() => b.of('result').find((r) => r.result.tool === 'prepare_observation'), 'brouillon à l’écran')).result as ToolResult<ObservationDraftData>;
     expect(draft.data.ready).toBe(true);
     expect(draft.data.eventTime.value).toEqual({ precision: 'DAY', date: today });
@@ -326,6 +330,16 @@ describe('Conversation en direct : brouillon et confirmation', () => {
     const s = draftSentence(d, (id) => id);
     expect(s).toMatch(/Indiquez l’animal concerné/);
     expect(s).not.toMatch(/je confirme/);
+  });
+
+  it('date dite à voix haute : aujourd’hui, hier, sinon le jour et le mois ; aucune heure si elle n’est pas enregistrée', () => {
+    const now = new Date('2026-11-22T10:00:00.000Z');
+    expect(spokenDate({ precision: 'DAY', date: '2026-11-22' }, now)).toBe('aujourd’hui');
+    expect(spokenDate({ precision: 'DAY', date: '2026-11-21' }, now)).toBe('hier');
+    expect(spokenDate({ precision: 'DAY', date: '2026-11-01' }, now)).toBe('le 1er novembre');
+    expect(spokenDate({ precision: 'DAY', date: '2025-03-12' }, now)).toBe('le 12 mars 2025');
+    expect(spokenDate({ precision: 'INSTANT', at: '2026-11-22T07:30:00.000Z' }, now)).toBe('aujourd’hui à 7 heures 30');
+    expect(spokenDate({ precision: 'UNKNOWN' }, now)).toBe('inconnue');
   });
 });
 
@@ -429,7 +443,7 @@ describe('Conversation en direct : confirmation liée à un brouillon précis', 
     const late = await turn('Oui.', 'confirm_observation');
     const r = await late.done();
     expect(r.response.recorded).toBe(false);
-    expect(String(r.response.say)).toMatch(/dites « je confirme »/);
+    expect(String(r.response.say)).toMatch(/dites « je confirme », ou touchez le bouton vert/);
     late.close();
     expect(b.of('confirm_request')).toHaveLength(0);
     await turn('Je confirme.', 'confirm_observation');

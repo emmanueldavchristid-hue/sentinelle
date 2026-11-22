@@ -19,6 +19,20 @@ test('direct : « je confirme » dit à la voix enregistre le brouillon lu, une 
     ws.on('framereceived', (f) => typeof f.payload === 'string' && got.push(JSON.parse(f.payload)));
     ws.on('framesent', (f) => typeof f.payload === 'string' && sent.push(JSON.parse(f.payload)));
   });
+  // En cas d'échec, la trace des échanges (sans le son) dit ce que le modèle a entendu, dit et appelé.
+  const t0 = Date.now();
+  const trace: string[] = [];
+  page.on('websocket', (ws) => {
+    if (!ws.url().endsWith('/api/assistant/live')) return;
+    const note = (dir: string) => (f: { payload: string | Buffer }) => {
+      if (typeof f.payload !== 'string') return;
+      const m = JSON.parse(f.payload) as { type: string; text?: string; result?: { tool: string }; state?: string; message?: string };
+      trace.push(`${((Date.now() - t0) / 1000).toFixed(1)}s ${dir} ${m.type} ${m.text ?? m.result?.tool ?? m.state ?? m.message ?? ''}`);
+    };
+    ws.on('framereceived', note('<'));
+    ws.on('framesent', note('>'));
+  });
+  test.info().annotations.push({ type: 'trace', description: 'voir la sortie en cas d’échec' });
   await page.goto('/');
   const talk = page.getByRole('complementary', { name: 'Parler à mon élevage' });
   const count = async () => (await (await page.request.get('/api/farm/changes', { headers: { 'x-demo-user': 'U-ELEVEUR' } })).json()).data.counts.total as number;
@@ -32,7 +46,12 @@ test('direct : « je confirme » dit à la voix enregistre le brouillon lu, une 
   const draft = got.find((m) => m.type === 'result' && (m.result as { tool: string }).tool === 'prepare_observation') as unknown as { draft: { id: string; fingerprint: string } };
 
   // « Je confirme » : le serveur vérifie la phrase entendue, puis charge l'écran d'enregistrer CE brouillon.
-  await expect(talk.getByText('Reçu par le serveur')).toBeVisible({ timeout: 90_000 });
+  await expect(talk.getByText('Reçu par le serveur'))
+    .toBeVisible({ timeout: 90_000 })
+    .catch((e) => {
+      console.log(`[trace]\n${trace.join('\n')}`);
+      throw e;
+    });
   const requests = got.filter((m) => m.type === 'confirm_request');
   expect(requests).toHaveLength(1);
   expect(requests[0]!.draftId).toBe(draft.draft.id);
