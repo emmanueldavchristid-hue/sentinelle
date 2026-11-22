@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BEACON_STATUS_LABELS, type Beacon } from '@sentinelle/contracts';
+import { BEACON_SOURCE_LABELS, BEACON_STATUS_LABELS, type Beacon } from '@sentinelle/contracts';
 import { api, ApiFailure, NetworkError } from '../api';
 
 /**
@@ -89,7 +89,7 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
     watchId.current = navigator.geolocation.watchPosition(
       (p) => (setFix({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, at: Date.now() }), setGeoMsg(null)),
       (e) => setGeoMsg(geoError(e.code)),
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 20_000 },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 },
     );
     // Écran allumé si le navigateur le permet : un téléphone en veille n'envoie plus rien.
     void (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<unknown> } }).wakeLock?.request('screen').catch(() => {});
@@ -120,16 +120,20 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
       const s = live.current;
       const fresh = s.fix && Date.now() - s.fix.at < FIX_STALE_MS ? s.fix : null;
       let reading: Record<string, unknown>;
+      // Instant observé : celui où le téléphone a obtenu sa position, pas celui de l'envoi. Une position un peu ancienne
+      // renvoyée ici garde donc son heure réelle ; l'écran de l'éleveur montre l'instant observé et l'instant reçu.
+      let observedAt = Date.now();
       if (s.mode === 'sim') {
         const a = (s.simBearing * Math.PI) / 180;
         reading = { source: 'SIMULATED', distanceM: s.sim, accuracyM: 0, eastM: round1(s.sim * Math.sin(a)), northM: round1(s.sim * Math.cos(a)) };
       } else if (fresh && s.home) {
         // Suivi GPS : la distance et la position relative viennent du même calcul, pour rester cohérentes entre elles.
         const o = offset(s.home, fresh);
+        observedAt = fresh.at;
         reading = { source: 'PHONE_GPS', distanceM: round1(Math.hypot(o.east, o.north)), accuracyM: round1(Math.hypot(fresh.acc, s.home.acc)), eastM: round1(o.east), northM: round1(o.north) };
       } else reading = { source: 'PHONE_GPS', distanceM: null, accuracyM: null };
       try {
-        await api(`/api/devices/${encodeURIComponent(id)}/readings`, { method: 'POST', headers, body: { ...reading, observedAt: new Date().toISOString() } });
+        await api(`/api/devices/${encodeURIComponent(id)}/readings`, { method: 'POST', headers, body: { ...reading, observedAt: new Date(observedAt).toISOString() } });
         setSendMsg({ tone: 'ok', text: `Dernier envoi à ${clock(new Date().toISOString())}.` });
       } catch (e) {
         setSendMsg({ tone: 'error', text: e instanceof NetworkError ? 'Envoi impossible : pas de connexion au serveur. La balise sera dite muette.' : e instanceof ApiFailure ? e.message : 'Envoi impossible.' });
@@ -192,7 +196,7 @@ export function BeaconPage({ id, token }: { id: string; token: string }) {
               {l ? (
                 <p className="v-meta mt-1">
                   {l.distanceM === null ? 'Pas de position' : `${Math.round(l.distanceM)} m du repère`}
-                  {l.accuracyM ? ` (précision ± ${Math.round(l.accuracyM)} m)` : ''} · observée à <span className="num">{clock(l.observedAt)}</span> · reçue à <span className="num">{clock(l.receivedAt)}</span> · {l.source === 'SIMULATED' ? 'distance simulée' : 'GPS du téléphone'}
+                  {l.accuracyM ? ` (précision ± ${Math.round(l.accuracyM)} m)` : ''} · observée à <span className="num">{clock(l.observedAt)}</span> · reçue à <span className="num">{clock(l.receivedAt)}</span> · {BEACON_SOURCE_LABELS[l.source]}
                 </p>
               ) : (
                 <p className="v-meta mt-1">Aucune mesure reçue pour l’instant.</p>

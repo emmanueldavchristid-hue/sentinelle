@@ -272,6 +272,29 @@
     .v-alert-figure { padding-left: 12px; }
   }
 
+  /* Suivi automatique de l'appareil : bandeau de transparence. Sobre, et toujours en haut de l'écran pendant le suivi. */
+  .v-track { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 14px; padding: 6px 12px; border-bottom: 1px solid var(--color-filet); background: var(--color-papier); color: var(--color-encre-2); font-size: 13px; line-height: 1.35; }
+  .v-track[data-on="true"] { position: sticky; top: 0; z-index: 30; background: var(--color-laterite-soft); border-bottom-color: var(--color-laterite); color: var(--color-encre); }
+  .v-track-text { margin: 0; min-width: 0; }
+  .v-track-text b { font-weight: 650; }
+  .v-track-detail { color: var(--color-encre-2); }
+  .v-track-btn { min-height: 36px; padding: 0 12px; border-radius: 4px; border: 1.5px solid var(--color-encre); background: var(--color-papier); color: var(--color-encre); font-weight: 650; font-size: 13.5px; cursor: pointer; white-space: nowrap; }
+  .v-track-btn:hover { background: #fff; }
+  .v-track-btn:focus-visible { outline: 3px solid var(--color-laterite); outline-offset: 2px; }
+  @media (min-width: 768px) { .v-track { padding: 6px 32px; } }
+  @media (max-width: 640px) {
+    /* Téléphone : la phrase et le bouton seulement ; le détail ne reste que s'il signale un envoi interrompu ou un appareil muet. */
+    .v-track-detail:not([data-warn="true"]) { display: none; }
+    .v-track-btn { min-height: 40px; padding: 0 10px; }
+  }
+
+  /* Vue de la zone avec beaucoup d'appareils : des points numérotés sur le schéma, et la liste numérotée dessous. */
+  .v-zone-list[data-compact="true"] { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); column-gap: 28px; padding-bottom: 12px; }
+  .v-zone-list[data-compact="true"] li { padding: 9px 0; column-gap: 12px; align-items: start; }
+  .v-zone-list[data-compact="true"] .v-figure { font-size: 24px; letter-spacing: -0.03em; }
+  .v-zone-index { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 5px; border-radius: 999px; background: #f3efe2; color: var(--color-nuit); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .v-zone-list [data-out="true"] .v-zone-index { background: var(--color-lueur); }
+
   .v-dialog { margin: auto; border: 1.5px solid var(--color-encre); border-radius: 4px; padding: 0; width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 48px); background: var(--color-papier); color: var(--color-encre); }
   .v-dialog::backdrop { background: rgb(14 43 39 / 0.45); }
   .v-skeleton { background: linear-gradient(90deg, #e9e2d0 25%, #f2ecdd 37%, #e9e2d0 63%); background-size: 400% 100%; border-radius: 3px; }
@@ -299,3 +322,8 @@
 @media (prefers-reduced-motion: reduce) {
   .v-pulse { opacity: 0; }
 }
+
+/* Pendant le suivi automatique, le bandeau reste en haut de l'écran (voir .v-track) : les panneaux qui se fixent en haut au
+   défilement se placent dessous. Hors des couches, pour passer devant les classes utilitaires. */
+@media (min-width: 64rem) { .lg\:sticky.lg\:top-4 { top: calc(var(--suivi-h, 0px) + 1rem); } }
+@media (min-width: 80rem) { .xl\:sticky.xl\:top-4 { top: calc(var(--suivi-h, 0px) + 1rem); } }

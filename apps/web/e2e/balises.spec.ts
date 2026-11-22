@@ -9,7 +9,9 @@ test('balise : association, repère, éloignement, alerte, incident compris avec
   await page.goto('/');
   const panel = page.getByRole('region', { name: 'Balises' });
   const talk = page.getByRole('complementary', { name: 'Parler à mon élevage' });
-  await expect(panel).toContainText('Aucune balise associée. Rien n’est mesuré automatiquement.');
+  await expect(panel).toContainText('Aucun appareil suivi, aucune balise associée. Rien n’est mesuré pour l’instant.');
+  // Ce navigateur de test n'a pas l'autorisation de position : il n'est pas suivi, et le dit en une ligne.
+  await expect(page.getByRole('region', { name: 'Suivi de cet appareil' })).toContainText('n’est pas suivi comme balise');
 
   // Association à un animal : lien à ouvrir sur le téléphone, avec l'avertissement « localhost » quand il s'applique.
   await panel.getByRole('button', { name: 'Associer une balise' }).click();

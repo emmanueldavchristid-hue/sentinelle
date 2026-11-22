@@ -17,6 +17,8 @@ const TABLES = [
   'device_incidents',
   'device_readings',
   'devices',
+  // Repère commun des appareils suivis automatiquement : effacé avec les balises, il sera repris à la première position reçue.
+  'org_anchors',
   'sessions',
   'import_batches',
   'audit_events',

@@ -1,4 +1,4 @@
-import { beaconName, bearingOf, BEACON_STATUS_LABELS, type Beacon } from '@sentinelle/contracts';
+import { ageText, atBearingText, beaconName, bearingOf, BEACON_SOURCE_LABELS, BEACON_STATUS_LABELS, distanceText, type Beacon } from '@sentinelle/contracts';
 
 /**
  * Zone autour du repère : la vue « déplacement » des balises de démonstration.
@@ -7,21 +7,40 @@ import { beaconName, bearingOf, BEACON_STATUS_LABELS, type Beacon } from '@senti
  * La direction n'est pas mesurée : chaque balise garde un rayon fixe, choisi seulement pour la lisibilité.
  * Les points plus pâles sur le même rayon sont ses mesures précédentes : on voit si elle s'éloigne ou revient.
  * Un trait le long du rayon montre la précision annoncée de la dernière mesure.
+ *
+ * Suivi automatique : les appareils sont placés par rapport au REPÈRE COMMUN, à la position que le serveur calcule à partir de
+ * celle que leur navigateur envoie. Au-delà de cinq balises, les libellés ne tiendraient plus autour des points : le schéma
+ * passe à des points numérotés, et la liste numérotée dessous porte le nom, la distance, le statut, la source et l'ancienneté.
  */
 const W = 720;
 const H = 500;
 const CX = 318;
 const CY = 252;
 const RMAX = 196; // rayon, en unités du dessin, de la distance la plus grande représentée
+/** Au-delà de ce nombre de balises, le schéma passe aux points numérotés. */
+const COMPACT_FROM = 6;
+/**
+ * L'échelle s'élargit pour montrer toute une trajectoire, mais pas au-delà de cette distance : un appareil qui ouvre le lien
+ * depuis une autre ville écraserait tous les autres sur le repère. Il est dessiné au bord, dans sa direction, et sa distance est écrite.
+ */
+const REACH_CAP_M = 1500;
+/** D'où vient la mesure, avec sa précision. */
+const sourceText = (l: NonNullable<Beacon['latest']>) => (l.source === 'SIMULATED' ? 'distance simulée' : `${BEACON_SOURCE_LABELS[l.source]}${l.accuracyM ? `, ± ${distanceText(l.accuracyM)}` : ''}`);
 
 export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simulated: boolean; onSource: (ref: string) => void }) {
-  const active = beacons.filter((b) => b.status !== 'STOPPED');
-  if (!active.length) return null;
+  const live = beacons.filter((b) => b.status !== 'STOPPED');
+  if (!live.length) return null;
+  // Points numérotés : dans l'ordre d'arrivée des appareils, pour que le numéro d'un appareil ne change pas quand un autre arrive.
+  const active = live.length >= COMPACT_FROM ? [...live].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : live;
   const radius = Math.max(...active.map((b) => b.radiusM));
   // Échelle : le seuil le plus grand occupe 45 % du rayon ; au-delà de 2,2 fois le seuil, la balise est dessinée au bord.
   // Suivi GPS : l'échelle s'élargit pour que toute la trajectoire soit dessinée à sa vraie distance (rien n'est écrasé sur le bord).
-  const reach = Math.max(0, ...active.flatMap((b) => [...(b.track ?? []).map((t) => Math.hypot(t.eastM, t.northM)), b.latest?.eastM != null && b.latest.northM != null ? Math.hypot(b.latest.eastM, b.latest.northM) : 0]));
+  const reach = Math.max(0, ...active.flatMap((b) => [...(b.track ?? []).map((t) => Math.hypot(t.eastM, t.northM)), b.latest?.eastM != null && b.latest.northM != null ? Math.hypot(b.latest.eastM, b.latest.northM) : 0]).filter((m) => m <= REACH_CAP_M));
   const far = Math.max(radius * 2.2, reach * 1.18);
+  const compact = active.length >= COMPACT_FROM;
+  /** Au moins un appareil suivi automatiquement : le repère est le repère commun, et le serveur fait le calcul. */
+  const auto = active.some((b) => b.auto);
+  const manual = active.some((b) => !b.auto);
   // L'échelle se lit sur la diagonale nord-ouest : les libellés des balises s'écrivent vers la droite, ils ne s'y croisent pas.
   const tick = (m: number, gap: number) => ({ x: CX - scale(m) * 0.7071 - gap, y: CY - scale(m) * 0.7071 - gap });
   const scale = (m: number) => (Math.min(m, far) / far) * RMAX;
@@ -44,26 +63,35 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
           {gps ? 'Suivi GPS autour du repère' : tracked ? 'Suivi autour du repère' : 'Zone autour du repère'}
         </h2>
         <p className="text-[13.5px] text-[#b9c8c0]">
-          {tracked
-            ? `Chaque balise est placée à sa position par rapport au repère (distance et direction)${gps ? ', calculée par son téléphone à partir de son GPS' : ', réglée à la main sur le téléphone'}. Le nord est en haut. Aucune coordonnée géographique n’est transmise.`
-            : 'Chaque balise est placée à la distance que son téléphone calcule depuis le repère. La direction n’est pas mesurée.'}
+          {auto
+            ? `Chaque appareil est placé à sa position par rapport au repère commun (distance et direction), calculée par le serveur à partir de la position que son navigateur envoie. Le nord est en haut. La position du repère reste sur le serveur : elle n’est pas affichée.${manual ? ' Les balises associées à la main ont chacune leur propre repère, fixé sur leur téléphone.' : ''}`
+            : tracked
+              ? `Chaque balise est placée à sa position par rapport au repère (distance et direction)${gps ? ', calculée par son téléphone à partir de son GPS' : ', réglée à la main sur le téléphone'}. Le nord est en haut. Aucune coordonnée géographique n’est transmise.`
+              : 'Chaque balise est placée à la distance que son téléphone calcule depuis le repère. La direction n’est pas mesurée.'}
         </p>
         {simulated && <p className="mt-1 inline-block bg-[#f2b24a] px-2 py-0.5 text-[13.5px] font-bold text-[#0e2b27]">DONNÉES SIMULÉES</p>}
       </div>
-      {/* Petit écran : les mêmes mesures, en liste. */}
-      <ul className="v-zone-list relative sm:hidden">
-        {active.map((b) => {
+      {/* Petit écran : les mêmes mesures, en liste. Avec beaucoup d'appareils, la liste numérotée accompagne le schéma à toutes les tailles. */}
+      <ul className={`v-zone-list relative ${compact ? '' : 'sm:hidden'}`} data-compact={compact ? 'true' : undefined} aria-label="Balises autour du repère">
+        {active.map((b, i) => {
           const l = b.latest;
           return (
             <li key={b.id} data-out={b.status === 'OUTSIDE' ? 'true' : undefined}>
-              <span className="v-figure">{l?.distanceM != null ? `${Math.round(l.distanceM)} m` : '?'}</span>
+              <span className="v-figure">
+                {compact && (
+                  <span className="v-zone-index mr-2 align-middle" aria-hidden="true">
+                    {i + 1}
+                  </span>
+                )}
+                {l?.distanceM != null ? distanceText(l.distanceM) : '?'}
+              </span>
               <span>
-                <b className="block text-[17px]">{beaconName(b)}</b>
-                <span className="block text-[14.5px] text-[#b9c8c0]">
-                  {bearingOf(l?.eastM, l?.northM, l?.accuracyM) ? `au ${bearingOf(l?.eastM, l?.northM, l?.accuracyM)} du repère · ` : ''}
+                <b className={`block ${compact ? 'text-[15.5px]' : 'text-[17px]'}`}>{beaconName(b)}</b>
+                <span className={`block text-[#b9c8c0] ${compact ? 'text-[13.5px]' : 'text-[14.5px]'}`}>
+                  {bearingOf(l?.eastM, l?.northM, l?.accuracyM) ? `${atBearingText(bearingOf(l?.eastM, l?.northM, l?.accuracyM)!)} du repère · ` : ''}
                   {BEACON_STATUS_LABELS[b.status].toLowerCase()} · seuil {b.radiusM} m
-                  {l ? ` · ${l.source === 'SIMULATED' ? 'distance simulée' : `GPS du téléphone${l.accuracyM ? `, ± ${Math.round(l.accuracyM)} m` : ''}`}` : ''}
-                  {b.silentSeconds !== null && b.silentSeconds >= 8 ? ` · il y a ${b.silentSeconds < 90 ? `${b.silentSeconds} s` : `${Math.round(b.silentSeconds / 60)} min`}` : ''}
+                  {l ? ` · ${sourceText(l)}` : ''}
+                  {b.silentSeconds !== null && (compact || b.silentSeconds >= 8) ? ` · ${ageText(b.silentSeconds)}` : ''}
                 </span>
               </span>
             </li>
@@ -113,7 +141,9 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
           const l = b.latest;
           const at = (m: number) => ({ x: CX + ux * scale(m), y: CY + uy * scale(m) });
           const name = beaconName(b);
-          const label = `Balise ${name} : ${BEACON_STATUS_LABELS[b.status].toLowerCase()}${l?.distanceM != null ? `, ${Math.round(l.distanceM)} m du repère` : ''}`;
+          const label = `Balise ${name} : ${BEACON_STATUS_LABELS[b.status].toLowerCase()}${l?.distanceM != null ? `, ${distanceText(l.distanceM)} du repère` : ''}`;
+          // Points numérotés : une balise sans position n'a pas de place sur le schéma, elle est dans la liste.
+          if (compact && (!l || l.distanceM === null)) return null;
           if (!l || l.distanceM === null) {
             const p = { x: CX + ux * (RMAX + 26), y: CY + uy * (RMAX + 26) };
             return (
@@ -140,6 +170,24 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
           const trail = b.recent.slice(1).filter((r) => r.distanceM !== null);
           const side = (real ? p.x < CX - 40 : ux < -0.2) ? 'end' : 'start';
           const tx = p.x + (side === 'end' ? -18 : 18);
+          if (compact) {
+            // Beaucoup d'appareils : un point numéroté par balise, sa trajectoire, et rien d'autre. Le statut n'est pas porté par
+            // la seule couleur : hors zone, le point devient un triangle ; muette, il s'estompe ; le mot est dans la liste.
+            return (
+              <g key={b.id} className="v-sky-mark" opacity={stale ? 0.55 : 1} role="button" tabIndex={0} aria-label={`${label}. Ouvrir la source.`} onClick={() => onSource(`DEVICE:${b.id}`)} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onSource(`DEVICE:${b.id}`)}>
+                <title>{label}</title>
+                {path.length > 1 && <polyline points={path.map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ')} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.6" />}
+                {out ? (
+                  <path className="v-sky-ring" d={`M ${p.x} ${p.y - 15} L ${p.x + 14} ${p.y + 10} L ${p.x - 14} ${p.y + 10} Z`} fill={color} stroke="#0e2b27" strokeWidth="2" strokeLinejoin="round" />
+                ) : (
+                  <circle className="v-sky-ring" cx={p.x} cy={p.y} r="11.5" fill={color} stroke="#0e2b27" strokeWidth="2" />
+                )}
+                <text x={p.x} y={p.y + (out ? 6 : 4.5)} textAnchor="middle" fontSize="12.5" fontWeight="700" style={{ fill: '#0e2b27' }}>
+                  {i + 1}
+                </text>
+              </g>
+            );
+          }
           return (
             <g key={b.id} className="v-sky-mark" opacity={stale ? 0.55 : 1} role="button" tabIndex={0} aria-label={`${label}. Ouvrir la source.`} onClick={() => onSource(`DEVICE:${b.id}`)} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onSource(`DEVICE:${b.id}`)}>
               <title>{label}</title>
@@ -170,13 +218,14 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
                 {name}
               </text>
               <text x={tx} y={p.y + 16} textAnchor={side} fontSize="15" className="v-halo v-sky-sub">
-                {beyond ? 'plus de ' : ''}
-                {Math.round(l.distanceM)} m{dir ? ` au ${dir}` : ''} · {BEACON_STATUS_LABELS[b.status].toLowerCase()}
+                {distanceText(l.distanceM)}
+                {dir ? ` ${atBearingText(dir)}` : ''}
+                {beyond ? ' (au-delà du schéma)' : ''} · {BEACON_STATUS_LABELS[b.status].toLowerCase()}
               </text>
               {/* D'où vient la mesure, sa précision, et son ancienneté si la balise ne transmet plus. */}
               <text x={tx} y={p.y + 34} textAnchor={side} fontSize="13.5" className="v-halo v-sky-sub">
-                {l.source === 'SIMULATED' ? 'distance simulée' : `GPS du téléphone${acc > 0 ? `, ± ${Math.round(acc)} m` : ''}`}
-                {b.silentSeconds !== null && (stale || b.silentSeconds >= 8) ? ` · ${stale ? 'dernière mesure ' : ''}il y a ${b.silentSeconds < 90 ? `${b.silentSeconds} s` : `${Math.round(b.silentSeconds / 60)} min`}` : ''}
+                {sourceText(l)}
+                {b.silentSeconds !== null && (stale || b.silentSeconds >= 8) ? ` · ${stale ? 'dernière mesure ' : ''}${ageText(b.silentSeconds)}` : ''}
               </text>
             </g>
           );
@@ -185,7 +234,7 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
       {/* Légende : ce que chaque signe veut dire, sans avoir à ouvrir une preuve. */}
       <ul className="relative hidden flex-wrap gap-x-5 gap-y-1 px-5 pb-4 text-[13.5px] text-[#b9c8c0] sm:flex">
         <li>
-          <span aria-hidden="true">■</span> repère fixé depuis le téléphone
+          <span aria-hidden="true">■</span> {auto ? 'repère commun' : 'repère fixé depuis le téléphone'}
         </li>
         <li>
           <span aria-hidden="true">┄</span> seuil de la zone
@@ -197,7 +246,7 @@ export function Zone({ beacons, simulated, onSource }: { beacons: Beacon[]; simu
           <span aria-hidden="true">▬</span> précision annoncée
         </li>
         <li className="text-[#f2b24a]">
-          <span aria-hidden="true">●</span> hors de la zone
+          <span aria-hidden="true">{compact ? '▲' : '●'}</span> hors de la zone
         </li>
       </ul>
     </section>
