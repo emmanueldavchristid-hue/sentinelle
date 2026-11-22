@@ -29,7 +29,7 @@ export interface InvestigationDto {
   investigation: { id: string; status: string; createdAt: string };
   observation: ObservationDto;
   runs: RunSummary[];
-  tasks: { id: string; recordId: string; kind: string; label: string; status: keyof typeof TASK_STATUS_LABELS; doneRev: number | null }[];
+  tasks: { id: string; recordId: string; kind: string; label: string; status: keyof typeof TASK_STATUS_LABELS; doneRev: number | null; doneAt?: string | null }[];
   locations: LocationDto[];
 }
 export interface RunDto {
@@ -491,7 +491,7 @@ function ParamsEditor({ params, busy, onRun }: { params: AnalysisOutput['params'
         <div className="field">
           <label htmlFor="p-depth">Profondeur</label>
           <select id="p-depth" className="input" value={depth} onChange={(e) => setDepth(Number(e.target.value))}>
-            {[1, 2, 3, 4].map((d) => (
+            {[1, 2].map((d) => (
               <option key={d} value={d}>
                 {d}
               </option>
@@ -566,6 +566,7 @@ export function InvestigationConsole({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const whyRef = useRef<HTMLDivElement>(null);
+  const [pendingTask, setPendingTask] = useState<string | null>(null);
 
   const latest = inv.data?.runs.at(-1)?.seq ?? null;
   const currentSeq = seq ?? latest;
@@ -576,7 +577,7 @@ export function InvestigationConsole({ id }: { id: string }) {
     api<RunDto>(`/api/investigations/${id}/runs/${currentSeq}`, { session })
       .then((r) => {
         setRun(r);
-        setSelectedKey((k) => (k && r.output.results.some((x) => x.key === k) ? k : (r.output.results.find((x) => x.status === 'INSUFFICIENT_INFO')?.key ?? r.output.results[0]?.key ?? null)));
+        setSelectedKey((k) => (k && r.output.results.some((x) => x.key === k) ? k : null));
       })
       .catch(setRunError);
   }, [id, currentSeq, session]);
@@ -617,11 +618,16 @@ export function InvestigationConsole({ id }: { id: string }) {
   };
 
   const requestTask = async (taskId: string) => {
+    if (pendingTask) return;
+    setPendingTask(taskId);
+    setMsg(null);
     try {
       await api(`/api/tasks/${taskId}/request`, { method: 'POST', session });
       await inv.reload();
     } catch (e) {
       setMsg({ tone: 'error', text: errorMessage(e) });
+    } finally {
+      setPendingTask(null);
     }
   };
 
@@ -636,7 +642,7 @@ export function InvestigationConsole({ id }: { id: string }) {
   return (
     <div className="space-y-4">
       <section className="card flex flex-wrap items-center gap-x-6 gap-y-3 p-4" aria-labelledby="inv-h">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-[1_1_22rem]">
           <h1 id="inv-h" className="text-lg font-bold">
             Enquête · signalement sur <span className="num">{d.observation.animalId}</span>
           </h1>
@@ -742,8 +748,8 @@ export function InvestigationConsole({ id }: { id: string }) {
             </section>
           </div>
 
-          <aside className="space-y-4">
-            <section className="card xl:sticky xl:top-4" aria-labelledby="why-h" ref={whyRef}>
+          <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
+            <section className="card" aria-labelledby="why-h" ref={whyRef}>
               <h2 id="why-h" className="card-h">
                 Pourquoi ce résultat ?
               </h2>
@@ -763,12 +769,12 @@ export function InvestigationConsole({ id }: { id: string }) {
                         <p className="font-medium">{t.label}</p>
                         <p className="hint">
                           {TASK_STATUS_LABELS[t.status]}
-                          {t.doneRev ? ` — révision ${t.doneRev} disponible : relancez l’analyse` : ''}
+                          {t.doneRev && t.doneAt && !d.runs.some((r) => Date.parse(r.createdAt) > Date.parse(t.doneAt!)) ? ` — révision ${t.doneRev} disponible : relancez l’analyse` : t.doneRev ? ` — révision ${t.doneRev} prise en compte` : ''}
                         </p>
                       </div>
                       {t.status === 'OPEN' && (
-                        <button className="btn btn-sm" onClick={() => requestTask(t.id)}>
-                          Demander à un agent
+                        <button className="btn btn-sm" onClick={() => requestTask(t.id)} disabled={pendingTask !== null}>
+                          {pendingTask === t.id ? 'Envoi…' : 'Demander à un agent'}
                         </button>
                       )}
                     </li>

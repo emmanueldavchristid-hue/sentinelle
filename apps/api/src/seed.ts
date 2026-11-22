@@ -1,17 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import { REFERENCE_OBSERVATION, REFERENCE_SCENARIO } from '@sentinelle/domain';
 import type { Db } from './db.js';
+import { seedLiving } from './seed-living.js';
 
 export const DEMO_ORG = 'ORG-DEMO';
 export const OTHER_ORG = 'ORG-AUTRE';
 
 export const DEMO_USERS = [
+  { id: 'U-ELEVEUR', org: DEMO_ORG, name: 'Éleveur (démo)', role: 'FARMER' },
   { id: 'U-AGENT', org: DEMO_ORG, name: 'Agent de terrain (démo)', role: 'AGENT' },
   { id: 'U-VET', org: DEMO_ORG, name: 'Vétérinaire enquêteur (démo)', role: 'VET' },
   { id: 'U-VET-AUTRE', org: OTHER_ORG, name: 'Vétérinaire, autre organisation (démo)', role: 'VET' },
 ] as const;
 
 const TABLES = [
+  'device_incidents',
+  'device_readings',
+  'devices',
   'sessions',
   'import_batches',
   'audit_events',
@@ -29,7 +34,7 @@ const TABLES = [
 ];
 
 /** Réinitialise toutes les données (destructif — réservé au mode démonstration) puis charge le scénario B-017. */
-export async function resetAndSeed(db: Db, opts: { withObservation?: boolean } = {}): Promise<void> {
+export async function resetAndSeed(db: Db, opts: { withObservation?: boolean; living?: boolean; now?: Date } = {}): Promise<void> {
   await db.tx(async (q) => {
     for (const t of TABLES) await q.query(`DELETE FROM ${t}`);
     await q.query('INSERT INTO organizations(id, name) VALUES ($1, $2), ($3, $4)', [
@@ -68,12 +73,14 @@ export async function resetAndSeed(db: Db, opts: { withObservation?: boolean } =
         [id, randomUUID(), DEMO_ORG, REFERENCE_OBSERVATION.animalId, REFERENCE_OBSERVATION.locationId, JSON.stringify(REFERENCE_OBSERVATION.eventTime), REFERENCE_OBSERVATION.note, '2026-03-12T07:45:00Z'],
       );
     }
+    // Couche d'événements récents, datés relativement au jour de la réinitialisation (« depuis hier » reste vrai).
+    if (opts.living) await seedLiving(q, DEMO_ORG, opts.now ?? new Date());
     await q.query('INSERT INTO audit_events(org_id, action, entity, entity_id, detail) VALUES ($1,$2,$3,$4,$5)', [
       DEMO_ORG,
       'DEMO_RESET',
       'database',
       'all',
-      JSON.stringify({ withObservation: !!opts.withObservation }),
+      JSON.stringify({ withObservation: !!opts.withObservation, living: !!opts.living }),
     ]);
   });
 }

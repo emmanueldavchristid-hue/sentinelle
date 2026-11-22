@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { AssistantStatus } from '@sentinelle/contracts';
 import { api, ApiFailure, isSimulatedOffline, loadSession, NetworkError, saveSession, setSimulatedOffline, type Session } from './api';
 import { LocalDb, localDbName, recoverInterrupted, syncOutbox, type OutboxItem, type SendResult } from './local';
 
@@ -7,6 +8,8 @@ export interface Health {
   demoMode: boolean;
   ai: { enabled: boolean; provider: string | null };
   engineVersion: string;
+  /** Assistant « Parler à mon élevage » : configuré côté serveur ou non. */
+  assistant?: AssistantStatus;
 }
 
 interface Ctx {
@@ -47,6 +50,24 @@ export function useRoute(): string[] {
 }
 export const go = (path: string) => {
   window.location.hash = `#/${path}`;
+};
+
+/** Mode démonstration : après « Changer de rôle », l'accueil montre le sélecteur au lieu d'ouvrir l'écran de l'éleveur. */
+const PICK_KEY = 'sentinelle.choisirRole';
+export const wantsRolePicker = () => {
+  try {
+    return sessionStorage.getItem(PICK_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+export const setWantsRolePicker = (v: boolean) => {
+  try {
+    if (v) sessionStorage.setItem(PICK_KEY, '1');
+    else sessionStorage.removeItem(PICK_KEY);
+  } catch {
+    /* stockage indisponible */
+  }
 };
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -134,6 +155,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       saveSession(null);
       setSession(null);
+      if (!opts.auto) setWantsRolePicker(true);
       go('');
       return true;
     },

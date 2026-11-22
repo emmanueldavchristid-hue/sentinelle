@@ -2,7 +2,16 @@ import { z } from 'zod';
 
 /** Instant ISO 8601 UTC. */
 const isoInstant = z.iso.datetime({ offset: true });
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date attendue au format AAAA-MM-JJ');
+/** Jour civil réel : « 2026-02-30 » est refusé (le calendrier fait foi, pas seulement le format). */
+export function isRealDate(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const t = Date.parse(`${date}T00:00:00Z`);
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === date;
+}
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date attendue au format AAAA-MM-JJ')
+  .refine(isRealDate, 'Cette date n’existe pas dans le calendrier');
 
 export const TemporalValueSchema = z.discriminatedUnion('precision', [
   z.object({ precision: z.literal('INSTANT'), at: isoInstant }),
@@ -15,7 +24,8 @@ export const TemporalValueSchema = z.discriminatedUnion('precision', [
 export type TemporalValueDto = z.infer<typeof TemporalValueSchema>;
 
 export const VerificationSchema = z.enum(['DECLARED', 'VERIFIED', 'TO_VERIFY']);
-export const RoleSchema = z.enum(['AGENT', 'VET']);
+export const RoleSchema = z.enum(['AGENT', 'VET', 'FARMER']);
+export const ROLE_LABELS: Record<z.infer<typeof RoleSchema>, string> = { FARMER: 'Éleveur', AGENT: 'Agent de terrain', VET: 'Vétérinaire' };
 export type Role = z.infer<typeof RoleSchema>;
 
 /** Données d'une révision d'enregistrement (append-only). */
@@ -125,3 +135,5 @@ export interface StructuringProvider {
   readonly name: string;
   propose(sourceText: string, signal: AbortSignal): Promise<StructuringProposal>;
 }
+
+export * from './farm.js';

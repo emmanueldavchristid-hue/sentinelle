@@ -1,4 +1,5 @@
 import { openTestDb } from './helpers.js';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -212,17 +213,35 @@ describe('Sécurité (démonstration locale)', () => {
     const root = resolve(__dirname, '../../..');
     const skip = new Set(['node_modules', '.git', 'dist', 'data', 'test-results', 'playwright-report']);
     const offenders: string[] = [];
+    // Un fichier .env local est attendu (clé de l'assistant) : il n'est acceptable que si Git l'ignore réellement.
+    const ignoredByGit = (p: string) => {
+      try {
+        execFileSync('git', ['check-ignore', '-q', p], { cwd: root, stdio: 'ignore' });
+        return true;
+      } catch {
+        return false;
+      }
+    };
     const walk = (dir: string) => {
       for (const f of readdirSync(dir)) {
         if (skip.has(f)) continue;
         const p = join(dir, f);
         if (statSync(p).isDirectory()) walk(p);
-        else if (/^\.env($|\.)/.test(f) && f !== '.env.example') offenders.push(p);
-        else if (/\.(ts|tsx|js|json|yml|yaml|md|html)$/.test(f) && /(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})/.test(readFileSync(p, 'utf8'))) offenders.push(p);
+        else if (/^\.env($|\.)/.test(f) && f !== '.env.example') {
+          if (!ignoredByGit(p)) offenders.push(p);
+        } else if (/\.(ts|tsx|js|mjs|json|yml|yaml|md|html|bat|txt|example)$/.test(f) && /(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|AQ\.[0-9A-Za-z_-]{30,}|gsk_[0-9A-Za-z]{30,})/.test(readFileSync(p, 'utf8'))) offenders.push(p);
       }
     };
     walk(root);
     expect(offenders).toEqual([]);
+    // Aucun fichier .env n'est suivi par Git.
+    let tracked = '';
+    try {
+      tracked = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' });
+    } catch {
+      /* hors dépôt Git (image Docker) : le contrôle ci-dessus suffit */
+    }
+    expect(tracked.split('\n').filter((f) => /(^|\/)\.env($|\.)/.test(f) && !f.endsWith('.env.example'))).toEqual([]);
   });
 });
 
@@ -259,7 +278,10 @@ describe('Réinitialisation de démonstration', () => {
     expect((await app.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset', origin: 'https://evil.example', host: 'localhost' }, payload: {} })).statusCode).toBe(403);
     const r = await app.inject({ method: 'POST', url: '/api/demo/reset', headers: { 'x-sentinelle-demo': 'reset' }, payload: { withObservation: true } });
     expect(r.statusCode).toBe(200);
-    expect((await app.inject({ url: '/api/observations', headers: VET })).json()).toHaveLength(1);
+    // Le signalement B-017 du scénario, plus les 3 observations du jeu vivant (datées relativement au jour de la réinitialisation).
+    const afterReset = (await app.inject({ url: '/api/observations', headers: VET })).json() as { animalId: string }[];
+    expect(afterReset.filter((o) => o.animalId === 'B-017')).toHaveLength(1);
+    expect(afterReset).toHaveLength(4);
     const p6 = (await db.query<{ n: number }>("SELECT COUNT(*)::int AS n FROM record_revisions WHERE record_id = 'P6'")).rows[0]!.n;
     expect(p6).toBe(1);
   });

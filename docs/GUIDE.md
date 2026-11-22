@@ -22,8 +22,35 @@ Ouvrir **http://localhost:3000**. Au premier démarrage, la base (PostgreSQL emb
 
 ## 3. Utilisation
 
+### 3.0 Mon élevage aujourd’hui (SENTINELLE VIVANT, branche `sentinelle-vivant`)
+L’application s’ouvre sur cet écran avec l’éleveur de démonstration. Il réunit :
+- le **registre** : ce qui est enregistré, ce qui a été reçu depuis hier, ce qui reste à compléter, la dernière réception par le serveur (chaque case pose la question correspondante) ;
+- la **constellation** : sites, animaux avec une présence ouverte, déplacements enregistrés ; vue « Liste » équivalente, seule vue sur téléphone ;
+- la **chronologie**, avec pour chaque événement sa date, sa saisie et sa réception ;
+- **Parler à mon élevage** : une question en texte, une réponse dont chaque phrase porte sa nature (fait enregistré, résultat calculé, donnée absente, suggestion) et ses sources cliquables.
+
+Ajouter une observation : écrire « Ajoute une observation sur B-017 : … » ou cliquer « Ajouter une observation ». Un **brouillon** apparaît ; rien n’est enregistré avant « Confirmer et enregistrer » ; le **reçu** vient du serveur. Reposer ensuite la même question montre la réponse mise à jour, et « Pourquoi ta réponse a changé ? » montre l’enregistrement ajouté entre les deux états.
+
+**Affichage simple ou détaillé** : par défaut l'écran montre l'essentiel. « Affichage détaillé » (en haut à droite) affiche d'emblée les libellés de nature, les sources, les dates de saisie et de réception, les limites et les réglages de démonstration. En affichage simple, « Détails et preuves » sous une réponse et « Voir le détail » dans la chronologie y donnent accès.
+
+**Parler en direct** (si le serveur a un modèle de conversation en direct, `GEMINI_LIVE_MODEL`) : le gros bouton rond ouvre une conversation ; après le bip, parlez, la réponse est dite dès que vous avez fini. Pendant la réponse, le micro n'est pas transmis : touchez « Interrompre » pour reprendre la parole. La conversation se ferme d'elle-même après 30 secondes de silence ou 5 minutes ; un second appui la ferme. Ce que l'assistant dit s'affiche (transcription automatique) avec les données qu'il a lues. Si elle ne peut pas s'ouvrir, l'écran affiche à la place la dictée décrite ci-dessous.
+
+**Aide à la saisie d'une observation** (fiche d'un animal, « Nouvelle observation ») : dans le volet du haut, écrivez ou dictez votre observation en une phrase (« Elle boite depuis hier, je l'ai vue au marché »), puis « Remplir le formulaire ». Le lieu, le moment et l'observation sont remplis ; l'assistant répond dans le volet et dit ce qu'il n'a pas supposé (une heure non dite, par exemple). Relisez les champs signalés « rempli par l'aide à la saisie », corrigez si besoin, puis enregistrez : rien n'est enregistré avant. Sans assistant IA sur le serveur, la phrase est lue par des règles fixes.
+
+**E-mail d'alerte (facultatif)** : désactivé par défaut. Pour l'activer : créer un compte sur resend.com et une clé d'API ; dans `sentinelle/.env`, écrire `RESEND_API_KEY=` (la clé), `ALERT_EMAIL_TO=` (l'adresse du destinataire de test : avec Resend sans domaine vérifié, celle du compte), `PUBLIC_URL=` (l'adresse publique de l'application) et `ALERT_EMAIL=on` ; lancer `pnpm alert:check`, puis `pnpm alert:check --envoyer` pour un message d'essai réel ; relancer le serveur. Un seul message part par épisode d'éloignement ; l'incident affiche ce que le service d'envoi a répondu.
+
+**Incident d'éloignement** : quand une balise est mesurée hors de sa zone, l'alerte propose « Comprendre avec Sentinelle ». L'assistant affiche ce qui a été détecté, quand, la mesure, la règle et l'état actuel, puis « Écouter et discuter ».
+
+**Parler** (dictée par tours, sans conversation en direct) : le gros bouton rond ouvre le micro ; il s'arrête de lui-même quand vous vous taisez, et votre phrase part directement. Pour confirmer un brouillon, dites ou écrivez « je confirme » ; pour l'abandonner, « non ». « Discussion » rouvre le micro après chaque réponse (3 minutes au plus).
+
+**Dicter** (affichage détaillé, ancien libellé) : sous la zone de question, « Dicter » ouvre le micro (le navigateur demande l'autorisation la première fois). Parlez, puis « Arrêter et transcrire » : le texte apparaît dans la zone de question, à relire avant « Demander ». « Annuler » n'envoie rien. La dictée demande l'assistant IA, une connexion, et une page en https ou sur localhost ; l'enregistrement est limité à 30 secondes et n'est pas conservé. **Réponses à voix haute** : activées par défaut (bouton « Réponses à voix haute : oui / non »). Chaque réponse, brouillon, reçu ou alerte est dit par une voix de synthèse, qui lit le texte affiché. « Écouter la réponse » permet de réécouter. Si `GEMINI_TTS_MODEL` est renseigné dans `.env`, la voix vient de Gemini ; sinon, ou hors connexion, c'est la voix de synthèse de l'appareil.
+
+**Balises de démonstration** : dans la section « Balises », « Associer une balise » à un animal crée un lien et un QR code à ouvrir sur un téléphone (l'application doit être ouverte par une adresse https joignable, pas par localhost). Sur le téléphone, soit « Autoriser la position » puis « Fixer le repère ici » près de l'ordinateur, soit « Distance simulée ». La page doit rester ouverte, écran allumé. L'écran de l'éleveur affiche le statut de chaque balise et une alerte quand l'une d'elles dépasse son seuil ; « Arrêter » met fin au suivi, et la réinitialisation de la démonstration efface les balises. Les coordonnées GPS restent sur le téléphone : seule la distance au repère est transmise.
+
+Sans assistant IA configuré, quelques formulations sont reconnues par des règles fixes (elles sont proposées à l’écran) et la saisie manuelle reste complète. Configuration de l’assistant : § 5.
+
 ### 3.1 Choisir un rôle (mode démonstration)
-L’écran d’accueil propose trois comptes fictifs : agent de terrain, vétérinaire enquêteur, vétérinaire d’une autre organisation (pour montrer l’isolation). « Changer de rôle » efface les données locales de l’utilisateur ; s’il reste des déclarations non transmises, une confirmation est demandée.
+Accessible par « Changer de rôle » ou l’adresse `/#/roles`. L’écran propose quatre comptes fictifs (éleveur, agent de terrain, vétérinaire enquêteur, vétérinaire d’une autre organisation, pour montrer l’isolation). « Changer de rôle » efface les données locales de l’utilisateur ; s’il reste des déclarations non transmises, une confirmation est demandée.
 
 ### 3.2 Agent de terrain
 1. **Rechercher** un animal par identifiant (ex. B-017), ou **scanner son QR code** si le navigateur le permet (Chrome/Edge sur Android). Le QR n’est qu’un raccourci : il ne prouve pas l’identité de l’animal.
@@ -62,6 +89,20 @@ Voir [DEMO.md](DEMO.md) : script de 3 minutes, préparation, solutions de secour
 ## 5. Intelligence artificielle (facultative)
 
 Sans configuration, l’IA est **désactivée** et tout fonctionne : saisie manuelle complète, synthèse déterministe. Deux fonctions utilisent l’IA si elle est activée : l’aide à la saisie d’une observation et la reformulation de la synthèse d’enquête. Le moteur d’analyse, lui, n’utilise **jamais** l’IA.
+
+### Assistant « Parler à mon élevage » (Gemini)
+Cet assistant est distinct des deux fonctions ci-dessus. Il se configure dans un fichier local, jamais versionné :
+
+1. Copier `.env.example` en `.env` dans le dossier `sentinelle` (à côté de `package.json`).
+2. Créer une clé dans Google AI Studio et l’écrire sur la ligne `GEMINI_API_KEY=` du fichier `.env`. Ne la coller nulle part ailleurs (ni conversation, ni capture, ni Git). Ne pas définir aussi `GOOGLE_API_KEY`.
+3. Lancer `pnpm assistant:check` : la commande liste les modèles réellement disponibles avec la clé, sans jamais afficher celle-ci.
+4. Recopier un nom de modèle sur la ligne `GEMINI_MODEL=`, relancer `pnpm assistant:check` (appel minimal puis appel de fonction), puis `pnpm demo`.
+
+Repères mesurés le 21/11/2026 avec la clé du projet : `gemini-3.5-flash-lite` répond en 1 à 6 secondes ; `gemini-3.6-flash` peut mettre près de 40 secondes ; `gemini-3.8-flash` et `gemini-4-hydrogen` renvoyaient « surchargé » (503). `GEMINI_FALLBACK_MODEL` désigne un modèle de secours en cas de 503. `ASSISTANT_AI=off` coupe l’assistant sans retirer la clé.
+
+À savoir : les appels sont décomptés du quota du projet Google rattaché à la clé ; vérifier sur la page des tarifs de Google que le modèle retenu est dans le palier gratuit, et que la facturation n’est pas activée par erreur. Sur le palier gratuit, le contenu envoyé peut servir à améliorer les produits de Google. Les questions et les résultats de lecture quittent donc l’ordinateur : n’y mettre que des données de démonstration.
+
+Garde-fous propres à cet assistant : il n’agit que par les fonctions de `apps/api/src/farm.ts` (aucun SQL libre, aucune écriture hors brouillon) ; un identifiant de source cité qui ne vient pas d’une lecture fait écarter la réponse ; délai maximal `ASSISTANT_TIMEOUT_MS`, nombre de demandes par session `ASSISTANT_MAX_REQUESTS_PER_SESSION` ; en cas d’échec, lecture directe des données, annoncée comme telle.
 
 ### Option A — modèle local gratuit (Ollama)
 1. Installer Ollama (https://ollama.com), puis : `ollama pull llama3.1` (ou un autre modèle).

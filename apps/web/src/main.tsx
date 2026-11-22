@@ -1,8 +1,9 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import '@fontsource-variable/fraunces/opsz.css';
 import './styles.css';
 import { api, ApiFailure, errorMessage } from './api';
-import { AppProvider, go, useApp, useRoute } from './state';
+import { AppProvider, go, setWantsRolePicker, useApp, useRoute, wantsRolePicker } from './state';
 import { Shell, ConnectionControl } from './components/Shell';
 import { Banner, ErrorView, Loading } from './components/ui';
 import { AgentTasks, AnimalCard, AnimalSearch, ObservationForm, Outbox, TaskCorrection } from './pages/agent';
@@ -11,11 +12,14 @@ import { ImportPage } from './pages/import';
 import { QrScan } from './pages/qr';
 import { InvestigationConsole } from './pages/console';
 import { Report } from './pages/report';
+import { FarmHome } from './pages/farm';
+import { BeaconPage } from './pages/beacon';
+import { conversation, session as farmSession } from './farm/store';
 
 interface DemoUser {
   id: string;
   name: string;
-  role: 'AGENT' | 'VET';
+  role: 'AGENT' | 'VET' | 'FARMER';
   org_id: string;
   org_name: string;
 }
@@ -32,10 +36,11 @@ function LoginForm() {
     if (!username.trim() || !password) return setError('Saisissez votre identifiant et votre mot de passe.');
     setBusy(true);
     try {
-      const u = await api<{ id: string; name: string; role: 'AGENT' | 'VET'; org_id: string; orgName: string }>('/api/auth/login', { method: 'POST', body: { username: username.trim(), password } });
+      const u = await api<{ id: string; name: string; role: 'AGENT' | 'VET' | 'FARMER'; org_id: string; orgName: string }>('/api/auth/login', { method: 'POST', body: { username: username.trim(), password } });
       setPassword('');
       login({ userId: u.id, name: u.name, role: u.role, orgId: u.org_id, orgName: u.orgName });
-      go(u.role === 'AGENT' ? 'animaux' : 'signalements');
+      // Un lien direct vers un incident garde sa destination après la connexion.
+      if (!location.hash.startsWith('#/elevage/')) go('elevage');
     } catch (err) {
       setError(err instanceof ApiFailure ? err.message : errorMessage(err));
     } finally {
@@ -92,8 +97,8 @@ function AuthPage() {
         <div className="flex items-center gap-3">
           <img src="/icon.svg" alt="" width={44} height={44} />
           <div>
-            <h1 className="text-2xl font-bold">Sentinelle</h1>
-            <p className="text-ink-2">Du signalement à l’enquête, chaque mouvement compte.</p>
+            <h1 className="v-display text-[30px]">Sentinelle Vivant</h1>
+            <p className="text-ink-2">Votre élevage. Vos données. Des réponses que vous pouvez vérifier.</p>
           </div>
         </div>
         <LoginForm />
@@ -109,9 +114,21 @@ function RolePicker() {
   const [error, setError] = useState<unknown>(null);
   const [demo, setDemo] = useState(false);
   const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const [route] = useRoute();
   const load = () =>
     api<{ users: DemoUser[] }>('/api/demo/users')
-      .then((r) => (setUsers(r.users), setError(null)))
+      .then((r) => {
+        setError(null);
+        // Ouverture directe sur « Mon élevage aujourd'hui » avec l'éleveur de démonstration, sauf si un autre rôle a été demandé.
+        const farmer = r.users.find((u) => u.id === 'U-ELEVEUR');
+        if (farmer && !wantsRolePicker() && route !== 'roles') {
+          login({ userId: farmer.id, name: farmer.name, role: farmer.role, orgId: farmer.org_id, orgName: farmer.org_name });
+          if (!location.hash.startsWith('#/elevage/')) go('elevage');
+          return;
+        }
+        setWantsRolePicker(true);
+        setUsers(r.users);
+      })
       .catch(setError);
   useEffect(() => {
     load();
@@ -121,6 +138,8 @@ function RolePicker() {
     if (!window.confirm('Réinitialiser toutes les données de démonstration ? Cette action efface les enquêtes et corrections.')) return;
     try {
       await api('/api/demo/reset', { method: 'POST', body: { withObservation }, headers: { 'x-sentinelle-demo': 'reset' } });
+      conversation.clear();
+      farmSession.reset();
       setResetMsg(withObservation ? 'Données réinitialisées, avec le signalement B-017 déjà reçu.' : 'Données réinitialisées (scénario B-017, sans signalement).');
     } catch (e) {
       setResetMsg(errorMessage(e));
@@ -135,8 +154,8 @@ function RolePicker() {
         <div className="flex items-center gap-3">
           <img src="/icon.svg" alt="" width={44} height={44} />
           <div>
-            <h1 className="text-2xl font-bold">Sentinelle</h1>
-            <p className="text-ink-2">Du signalement à l’enquête, chaque mouvement compte.</p>
+            <h1 className="v-display text-[30px]">Sentinelle Vivant</h1>
+            <p className="text-ink-2">Votre élevage. Vos données. Des réponses que vous pouvez vérifier.</p>
           </div>
         </div>
         <section className="card p-4" aria-labelledby="role-h">
@@ -147,13 +166,13 @@ function RolePicker() {
           {error ? <ErrorView error={error} onRetry={load} /> : null}
           {!users && !error ? <Loading /> : null}
           <ul className="space-y-2">
-            {users?.map((u) => (
+            {users && [...users].sort((a, b) => Number(a.org_id !== 'ORG-DEMO') - Number(b.org_id !== 'ORG-DEMO')).map((u) => (
               <li key={u.id}>
                 <button
-                  className="btn w-full justify-between text-left"
+                  className="btn w-full flex-wrap justify-between gap-x-3 whitespace-normal text-left"
                   onClick={() => {
                     login({ userId: u.id, name: u.name, role: u.role, orgId: u.org_id, orgName: u.org_name });
-                    go(u.role === 'AGENT' ? 'animaux' : 'signalements');
+                    go(u.role === 'AGENT' ? 'animaux' : u.role === 'VET' ? 'signalements' : 'elevage');
                   }}
                 >
                   <span>{u.name}</span>
@@ -191,38 +210,51 @@ function RolePicker() {
 function Router() {
   const { session } = useApp();
   const [page, arg, arg2] = useRoute();
+  // Page « balise » ouverte sur un téléphone par son lien : elle s'authentifie par le jeton du dispositif, sans session.
+  if (page === 'balise' && arg && arg2) return <BeaconPage id={arg} token={arg2} />;
   if (!session) return <Home />;
-  if (session.role === 'AGENT') {
+  // Écran d'ouverture, commun à tous les rôles : « Mon élevage aujourd'hui ».
+  if (page === undefined || page === 'elevage' || page === 'roles') {
+    return (
+      <Shell current="elevage">
+        <FarmHome animalId={page === 'elevage' && arg === 'animal' && arg2 ? arg2 : null} incidentId={page === 'elevage' && arg === 'incident' && arg2 ? arg2 : null} />
+      </Shell>
+    );
+  }
+  if (session.role === 'AGENT' || session.role === 'FARMER') {
     switch (page) {
       case 'animal':
-        return <Shell current="animaux" header={<span className="font-semibold">Fiche animale</span>}>{arg ? <AnimalCard id={arg} /> : null}</Shell>;
+        return <Shell current="animaux" title={arg ? `Fiche ${arg}` : 'Fiche animale'} header={<span className="font-semibold">Fiche animale</span>}>{arg ? <AnimalCard id={arg} /> : null}</Shell>;
       case 'declarer':
-        return <Shell current="animaux" header={<span className="font-semibold">Déclaration terrain</span>}>{arg ? <ObservationForm animalId={arg} /> : null}</Shell>;
+        return <Shell current="animaux" title="Nouvelle observation" header={<span className="font-semibold">Déclaration terrain</span>}>{arg ? <ObservationForm animalId={arg} /> : null}</Shell>;
       case 'envois':
-        return <Shell current="envois" header={<span className="font-semibold">Déclarations</span>}><Outbox /></Shell>;
+        return <Shell current="envois" title="Déclarations" header={<span className="font-semibold">Déclarations</span>}><Outbox /></Shell>;
       case 'taches':
-        return <Shell current="taches" header={<span className="font-semibold">Vérifications</span>}><AgentTasks /></Shell>;
+        if (session.role !== 'AGENT') break;
+        return <Shell current="taches" title="Vérifications" header={<span className="font-semibold">Vérifications</span>}><AgentTasks /></Shell>;
       case 'scan':
-        return <Shell current="animaux" header={<span className="font-semibold">Scanner un QR code</span>}><QrScan /></Shell>;
+        return <Shell current="animaux" title="Scanner un QR code" header={<span className="font-semibold">Scanner un QR code</span>}><QrScan /></Shell>;
       case 'tache':
-        return <Shell current="taches" header={<span className="font-semibold">Compléter une information</span>}>{arg ? <TaskCorrection taskId={arg} /> : null}</Shell>;
+        if (session.role !== 'AGENT') break;
+        return <Shell current="taches" title="Compléter une information" header={<span className="font-semibold">Compléter une information</span>}>{arg ? <TaskCorrection taskId={arg} /> : null}</Shell>;
       default:
-        return <Shell current="animaux" header={<span className="font-semibold">Rechercher un animal</span>}><AnimalSearch /></Shell>;
+        break;
     }
+    return <Shell current="animaux" title="Rechercher un animal" header={<span className="font-semibold">Rechercher un animal</span>}><AnimalSearch /></Shell>;
   }
   switch (page) {
     case 'signalement':
-      return <Shell current="signalements" header={<span className="font-semibold">Examen</span>}>{arg ? <Review id={arg} /> : null}</Shell>;
+      return <Shell current="signalements" title="Examen d’un signalement" header={<span className="font-semibold">Examen</span>}>{arg ? <Review id={arg} /> : null}</Shell>;
     case 'rapport':
-      return <Shell current="enquetes" header={<span className="font-semibold">Rapport d’enquête</span>}>{arg ? <Report id={arg} seq={Number(arg2) || 1} /> : null}</Shell>;
+      return <Shell current="enquetes" title="Rapport d’enquête" header={<span className="font-semibold">Rapport d’enquête</span>}>{arg ? <Report id={arg} seq={Number(arg2) || 1} /> : null}</Shell>;
     case 'import':
-      return <Shell current="import" header={<span className="font-semibold">Import de données</span>}><ImportPage /></Shell>;
+      return <Shell current="import" title="Import de données" header={<span className="font-semibold">Import de données</span>}><ImportPage /></Shell>;
     case 'enquetes':
-      return <Shell current="enquetes" header={<span className="font-semibold">Enquêtes</span>}><InvestigationList /></Shell>;
+      return <Shell current="enquetes" title="Enquêtes" header={<span className="font-semibold">Enquêtes</span>}><InvestigationList /></Shell>;
     case 'enquete':
-      return <Shell current="enquetes" header={<span className="font-semibold">Console d’enquête</span>}>{arg ? <InvestigationConsole id={arg} /> : null}</Shell>;
+      return <Shell current="enquetes" title="Console d’enquête" header={<span className="font-semibold">Console d’enquête</span>}>{arg ? <InvestigationConsole id={arg} /> : null}</Shell>;
     default:
-      return <Shell current="signalements" header={<span className="font-semibold">Signalements</span>}><Signals /></Shell>;
+      return <Shell current="signalements" title="Signalements" header={<span className="font-semibold">Signalements</span>}><Signals /></Shell>;
   }
 }
 

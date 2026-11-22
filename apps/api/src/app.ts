@@ -31,6 +31,11 @@ import { HttpError, parse, sha256, type User } from './http.js';
 import { findReplay, lock, requestHash, saveReplay } from './idempotency.js';
 import { type AuthConfig, registerAuth, sessionUser } from './auth.js';
 import { registerImport } from './import.js';
+import { registerFarm } from './farm.js';
+import { registerBeacons } from './beacons.js';
+import { type AssistantOptions, registerAssistant } from './assistant.js';
+import { registerLive } from './live.js';
+import { maskEmail, type AlertNotifier } from './notify.js';
 import { type StructuringProvider, type SummaryProvider, registerAssist, structuringFromLlm, summaryFromLlm } from './assist.js';
 import type { LlmClient } from './llm.js';
 
@@ -46,10 +51,17 @@ export interface AppOptions {
   structuringProvider?: StructuringProvider | null;
   summaryProvider?: SummaryProvider | null;
   aiLimits?: { timeoutMs?: number; maxCallsPerDay?: number };
+  /** Assistant « Parler à mon élevage » : modèle configuré côté serveur (absent = lecture directe, sans IA). */
+  assistant?: AssistantOptions;
+  /** E-mail d'alerte d'éloignement : prêt à envoyer (notifier), ou la raison pour laquelle il ne l'est pas. Absent = désactivé. */
+  alertEmail?: { notifier: AlertNotifier | null; reason: string | null };
+  /** Version servie (commit Git relevé au démarrage) : permet de savoir, depuis le lien public, quelle version répond. */
+  version?: string;
 }
 
 export async function buildApp(opts: AppOptions) {
   const { db } = opts;
+  const startedAt = new Date().toISOString();
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 64 * 1024 });
 
   app.setErrorHandler((err: unknown, _req, reply) => {
@@ -60,6 +72,7 @@ export async function buildApp(opts: AppOptions) {
     const e = err as { statusCode?: number; message?: string };
     if (e.statusCode && e.statusCode < 500) return reply.status(e.statusCode).send({ error: 'BAD_REQUEST', message: 'Requête invalide' });
     app.log.error(err);
+    if (!opts.logger) console.error('[sentinelle] erreur 500 :', err);
     return reply.status(500).send({ error: 'INTERNAL', message: 'Erreur interne du serveur' });
   });
 
@@ -68,7 +81,8 @@ export async function buildApp(opts: AppOptions) {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Frame-Options', 'DENY');
-    reply.header('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+    // Micro : dictée seulement. Position : page « balise » seulement. Toujours sur action explicite de l'utilisateur.
+    reply.header('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(self)');
     reply.header(
       'Content-Security-Policy',
       "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
@@ -199,6 +213,11 @@ export async function buildApp(opts: AppOptions) {
   const ctx = { app, db, demoMode: opts.demoMode, currentUser, requireRole, audit: (q: Queryable, u: User | null, a: string, e: string, id: string, d?: unknown) => audit(q, u, a, e, id, d) };
   registerAuth(ctx, opts.auth);
   registerImport(ctx);
+  const notifier = opts.alertEmail?.notifier ?? null;
+  const farm = registerFarm(ctx, { emailReady: !!notifier });
+  registerBeacons(ctx, notifier);
+  const live = registerLive(ctx, farm, opts.assistant?.live ?? null);
+  const assistant = registerAssistant(ctx, farm, { ...(opts.assistant ?? { model: null }), liveStatus: live.status });
   const llm = opts.llm ?? null;
   const assist = registerAssist(
     { ...ctx, getInvestigation },
@@ -214,7 +233,12 @@ export async function buildApp(opts: AppOptions) {
     db: db.mode,
     demoMode: opts.demoMode,
     engineVersion: ENGINE_VERSION,
+    version: opts.version ?? null,
+    startedAt,
     ai: assist.status(),
+    assistant: assistant.status(),
+    // E-mail d'alerte : état sans valeur secrète ; le destinataire n'apparaît que masqué.
+    alertEmail: notifier ? { enabled: true, provider: notifier.mailer.provider, to: maskEmail(notifier.to), reason: null } : { enabled: false, provider: null, to: null, reason: opts.alertEmail?.reason ?? 'E-mail d’alerte non activé sur ce serveur.' },
     serverTime: new Date().toISOString(),
   }));
 
@@ -239,7 +263,7 @@ export async function buildApp(opts: AppOptions) {
       if (host !== req.headers.host) throw new HttpError(403, 'FORBIDDEN', 'Origine refusée');
     }
     const body = (req.body ?? {}) as { withObservation?: unknown };
-    await resetAndSeed(db, { withObservation: body.withObservation === true });
+    await resetAndSeed(db, { withObservation: body.withObservation === true, living: true });
     return { ok: true };
   });
 
@@ -315,6 +339,17 @@ export async function buildApp(opts: AppOptions) {
     // Rejeu (réponse perdue, double envoi) : on renvoie l'enregistrement existant, sans doublon.
     const existing = (await db.query('SELECT * FROM observations WHERE idempotency_key = $1 AND org_id = $2 AND author_id = $3 AND id = $4', [body.idempotencyKey, u.org_id, u.id, body.clientId])).rows[0];
     if (!existing) throw new HttpError(409, 'CONFLICT', 'Identifiant client déjà utilisé par une autre opération');
+    // Le reçu dit la vérité : un rejeu n'est un doublon que si le contenu est identique. Sinon rien n'est modifié et on le dit.
+    const same =
+      existing.animal_id === body.animalId &&
+      existing.location_id === body.locationId &&
+      existing.note === body.note &&
+      stableStringify(json(existing.event_time)) === stableStringify(body.eventTime);
+    if (!same) {
+      throw new HttpError(409, 'CONTENT_MISMATCH', 'Cette déclaration a déjà été reçue avec un contenu différent : rien n’a été modifié. Pour corriger, enregistrez une nouvelle observation.', {
+        observation: observationDto(existing),
+      });
+    }
     return reply.status(200).send({ duplicate: true, observation: observationDto(existing) });
   });
 
@@ -555,6 +590,8 @@ export async function buildApp(opts: AppOptions) {
     await app.register(fastifyStatic, { root: opts.webDist, wildcard: false });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/')) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Route inconnue' });
+      // Un fichier absent (script d’une ancienne compilation, image) est une vraie erreur 404 : jamais la page HTML à sa place.
+      if (req.url.startsWith('/assets/') || /\.[a-z0-9]{2,5}(\?.*)?$/i.test(req.url)) return reply.status(404).type('text/plain; charset=utf-8').send('Fichier introuvable');
       return reply.type('text/html').sendFile('index.html');
     });
   }

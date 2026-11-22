@@ -1,6 +1,6 @@
 // Service worker minimal : met en cache l'interface déjà chargée (pas les données d'API).
 // Le premier lancement nécessite le réseau.
-const CACHE = 'sentinelle-shell-v1';
+const CACHE = 'sentinelle-shell-v2';
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/manifest.webmanifest', '/icon.svg'])));
   self.skipWaiting();
@@ -28,7 +28,8 @@ self.addEventListener('fetch', (e) => {
       (hit) =>
         hit ||
         fetch(e.request).then((r) => {
-          if (r.ok) {
+          // Jamais de page HTML mise en cache sous l’adresse d’un script ou d’une feuille de style (sinon écran blanc après une recompilation).
+          if (r.ok && !(r.headers.get('content-type') || '').includes('text/html')) {
             const copy = r.clone();
             caches.open(CACHE).then((c) => c.put(e.request, copy));
           }

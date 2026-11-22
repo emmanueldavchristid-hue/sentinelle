@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 async function chooseRole(page: Page, name: RegExp) {
-  await page.goto('/');
+  await page.goto('/#/roles');
   await page.getByRole('button', { name }).click();
 }
 async function resetDemo(page: Page) {
@@ -61,12 +61,13 @@ test('parcours principal : fiche → observation hors connexion → réouverture
 
   // Double clic sur un envoi déjà reçu : aucun doublon côté serveur
   const obs = await page2.request.get('/api/observations', { headers: { 'x-demo-user': 'U-VET' } });
-  expect((await obs.json()).length).toBe(1);
+  // Le jeu vivant contient d'autres observations : seul le signalement B-017 doit rester unique.
+  expect((await obs.json()).filter((o: { animalId: string }) => o.animalId === 'B-017').length).toBe(1);
 
   // 5. Vétérinaire : examen humain du signalement
   await page2.getByRole('button', { name: 'Changer de rôle' }).first().click();
   await page2.getByRole('button', { name: /Vétérinaire enquêteur/ }).click();
-  await page2.getByRole('button', { name: 'Examiner' }).click();
+  await page2.getByRole('button', { name: 'Examiner' }).first().click();
   await expect(page2.getByLabel('Début de la fenêtre')).toHaveValue('2026-02-25');
   await expect(page2.getByLabel('Fin de la fenêtre (exclue)')).toHaveValue('2026-03-13');
 
@@ -77,8 +78,10 @@ test('parcours principal : fiche → observation hors connexion → réouverture
   for (const t of ['Élevage A → Marché M', 'Marché M → Élevage C', 'B-031 à Marché M', 'B-052 à Marché M', 'B-044 à Marché M']) await expect(page2.getByRole('button', { name: new RegExp(t) }).first()).toBeVisible();
   await expect(results.getByText(/Élevage E.*proximité géographique n’est pas évaluée/)).toBeVisible();
 
-  // 8. Information manquante : B-052, sélectionnée par défaut
+  // 8. Information manquante : B-052 (depuis le correctif de recette du 20/11, aucun résultat n'est sélectionné d'office)
   const why = page2.getByRole('region', { name: 'Pourquoi ce résultat ?' });
+  await expect(why).toContainText('Sélectionnez un résultat');
+  await page2.getByRole('button', { name: /B-052 à Marché M/ }).first().click();
   await expect(why).toContainText('Information insuffisante');
   await expect(why).toContainText('Aucune heure n’a été supposée');
   await page2.getByRole('button', { name: /B-044 à Marché M/ }).click();
@@ -145,7 +148,7 @@ test('téléphone étroit (360 px) : pas de défilement horizontal sur les écra
 });
 
 test('clavier : le parcours de choix de rôle et de recherche est atteignable sans souris', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/roles');
   await expect(page.getByRole('button', { name: /Agent de terrain/ })).toBeVisible();
   await page.keyboard.press('Tab');
   let found = false;

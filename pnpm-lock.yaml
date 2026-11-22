@@ -31,6 +31,9 @@ importers:
       tsx:
         specifier: ^4
         version: 4.23.15
+      ws:
+        specifier: ^8.23.0
+        version: 8.23.0
       zod:
         specifier: ^4
         version: 4.6.7
@@ -41,6 +44,9 @@ importers:
       '@types/pg':
         specifier: ^8
         version: 8.23.1
+      '@types/ws':
+        specifier: ^8.18.2
+        version: 8.18.2
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -50,6 +56,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@fontsource-variable/fraunces':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@sentinelle/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -322,6 +331,9 @@ packages:
   '@fastify/static@10.1.11':
     resolution: {integrity: sha512-WjEpDqkzOziIipghh4ki3ZNfLCmI1kRWlYKar3+9FiuY2LzoeogKiDqxIH68r6vYUSxvUzyEiV1BOP0yfW+glQ==}
 
+  '@fontsource-variable/fraunces@5.3.0':
+    resolution: {integrity: sha512-9BYGySn4AHEJdgp9Z28tQ3X+laJMEOITXkQarZXeloWQZDq5oOvXJ3kDA8c7MGIfpogIaZfjrQBqmda8POOCKA==}
+
   '@isaacs/nonrecursive-glob-match@1.1.0':
     resolution: {integrity: sha512-GPm/Dbvk5RLmhRnxXIa7nTpK0xtl4E0wj0MslsuNiJ1FIROU+2+9lgUC/dgF7Ey4QCWhfEsgxilMRMCdHPfDfw==}
 
@@ -578,6 +590,9 @@ packages:
 
   '@types/react@19.3.0':
     resolution: {integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==}
+
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
   '@vitejs/plugin-react@6.3.0':
     resolution: {integrity: sha512-H9E955aVvD2F4zNHCw4eIZbIfF6xKldlh7MNu+hSU7xwQzh65lI/N+CJWqmfhi0PEjDXIt/H7T7J/4wU63KJiw==}
@@ -1277,6 +1292,18 @@ packages:
     resolution: {integrity: sha512-r6lPcBGxZXlIcymEu7InxDMhdW0KDxpLgoFLcguasxCaJ/SOIZwINatK9KY/tf+ZrlywOKU0UDj3ATXUBfxJXA==}
     engines: {node: '>=8'}
 
+  ws@8.23.0:
+    resolution: {integrity: sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
     engines: {node: '>=0.4'}
@@ -1437,6 +1464,8 @@ snapshots:
       fastify-plugin: 6.0.1
       fastq: 1.20.3
       glob: 14.0.6
+
+  '@fontsource-variable/fraunces@5.3.0': {}
 
   '@isaacs/nonrecursive-glob-match@1.1.0': {}
 
@@ -1633,6 +1662,10 @@ snapshots:
   '@types/react@19.3.0':
     dependencies:
       csstype: 3.2.3
+
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 22.20.5
 
   '@vitejs/plugin-react@6.3.0(vite@8.3.8(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))':
     dependencies:
@@ -2213,6 +2246,8 @@ snapshots:
       ansi-styles: 4.3.0
       string-width: 4.2.3
       strip-ansi: 6.0.1
+
+  ws@8.23.0: {}
 
   xtend@4.0.2: {}
 

@@ -8,3 +8,5 @@ coverage/
 playwright-report/
 test-results/
 data/
+# Sauvegardes locales de la base (pnpm db:backup)
+backups/

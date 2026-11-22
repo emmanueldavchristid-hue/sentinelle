@@ -14,7 +14,9 @@
     "db:restore": "tsx src/db-tools.ts restore",
     "user:list": "tsx src/users.ts list",
     "user:disable": "tsx src/users.ts disable",
-    "user:enable": "tsx src/users.ts enable"
+    "user:enable": "tsx src/users.ts enable",
+    "assistant:check": "tsx src/assistant-check.ts",
+    "alert:check": "tsx src/alert-check.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.16",
@@ -24,11 +26,13 @@
     "fastify": "^5",
     "pg": "^8",
     "tsx": "^4",
+    "ws": "^8.23.0",
     "zod": "^4"
   },
   "devDependencies": {
     "@types/node": "^22",
     "@types/pg": "^8",
+    "@types/ws": "^8.18.2",
     "typescript": "5.9.3",
     "vitest": "^5"
   }

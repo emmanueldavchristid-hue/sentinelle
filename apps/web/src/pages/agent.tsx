@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatInstant, formatTemporal, precisionLabel, type Movement, type Presence } from '@sentinelle/domain';
-import type { TemporalValueDto } from '@sentinelle/contracts';
+import type { DraftField, ObservationAssistReply, ObservationDraftData, TemporalValueDto } from '@sentinelle/contracts';
 import { api, ApiFailure, errorMessage, NetworkError } from '../api';
 import { enqueueObservation, OUTBOX_LABELS, type ObservationDraft, type OutboxItem } from '../local';
 import { go, useApp } from '../state';
 import { Banner, Empty, ErrorView, Loading, TemporalFields, toTemporal, type TemporalDraft } from '../components/ui';
 import { FicheQr } from './qr';
+import { canSpeak, Dictation, playSpeech, stopSpeech } from '../farm/Voice';
 
 export interface LocationDto {
   id: string;
@@ -208,6 +209,8 @@ export function ObservationForm({ animalId }: { animalId: string }) {
   const [draft, setDraft] = useState<ObservationDraft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [restored, setRestored] = useState(false);
+  /** Champs remplis par l'aide à la saisie, avec leur statut : signalés tant que l'utilisateur ne les a pas repris à la main. */
+  const [assisted, setAssisted] = useState<Partial<Record<'locationId' | 'eventTime' | 'note', DraftField<unknown>['status']>>>({});
 
   useEffect(() => {
     if (!db) return;
@@ -222,6 +225,13 @@ export function ObservationForm({ animalId }: { animalId: string }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, animalId]);
+
+  // Les fiches préchargées peuvent arriver après le brouillon : préremplir le lieu actuel si rien n'est choisi.
+  useEffect(() => {
+    if (!draft || draft.locationId || restored || draft.animalId !== animalId) return;
+    const current = preload?.cards.find((c) => c.animal.id === animalId)?.currentLocationId;
+    if (current) setDraft((d) => (d && !d.locationId ? { ...d, locationId: current } : d));
+  }, [preload, draft, animalId, restored]);
 
   /** Brouillon local enregistré à chaque modification : survit à la fermeture de l'onglet. */
   const update = (patch: Partial<ObservationDraft>) => {
@@ -265,18 +275,28 @@ export function ObservationForm({ animalId }: { animalId: string }) {
         <p className="hint">La saisie est conservée sur cet appareil, même sans connexion. Elle sera transmise depuis « Déclarations ».</p>
         <AssistPanel
           animalId={animalId}
-          onApply={(p) =>
+          locations={preload?.locations ?? []}
+          onApply={(d) => {
+            // Les champs proposés sont reportés tout de suite dans le formulaire. Rien n'est enregistré : l'utilisateur vérifie, puis valide.
+            const t = d.eventTime.value;
             update({
-              ...(p.locationId ? { locationId: p.locationId } : {}),
-              ...(p.observation ? { note: p.observation } : {}),
-              ...(p.eventTime?.precision === 'INSTANT' ? { precision: 'INSTANT', date: p.eventTime.at.slice(0, 10), time: p.eventTime.at.slice(11, 16) } : {}),
-              ...(p.eventTime?.precision === 'DAY' ? { precision: 'DAY', date: p.eventTime.date, time: '' } : {}),
-            })
-          }
+              ...(d.site.value ? { locationId: d.site.value } : {}),
+              ...(d.note.value ? { note: d.note.value } : {}),
+              ...(t?.precision === 'INSTANT' ? { precision: 'INSTANT' as const, date: t.at.slice(0, 10), time: t.at.slice(11, 16) } : {}),
+              ...(t?.precision === 'DAY' ? { precision: 'DAY' as const, date: t.date, time: '' } : {}),
+              ...(t?.precision === 'UNKNOWN' ? { precision: 'UNKNOWN' as const, date: '', time: '' } : {}),
+            });
+            setAssisted({ ...(d.site.value ? { locationId: d.site.status } : {}), ...(t ? { eventTime: d.eventTime.status } : {}), ...(d.note.value ? { note: d.note.status } : {}) });
+            setErrors({});
+          }}
         />
         <div className="field">
           <label htmlFor="obs-locationId">Lieu</label>
-          <select id="obs-locationId" className="input" value={draft.locationId} aria-invalid={!!errors.locationId} aria-describedby={errors.locationId ? 'err-loc' : undefined} onChange={(e) => update({ locationId: e.target.value })}>
+          <select id="obs-locationId" className="input" value={draft.locationId} aria-invalid={!!errors.locationId} aria-describedby={errors.locationId ? 'err-loc' : undefined} onChange={(e) => {
+              update({ locationId: e.target.value });
+              setAssisted((a) => ({ ...a, locationId: undefined }));
+            }}
+          >
             <option value="">— Choisir —</option>
             {(preload?.locations ?? []).map((l) => (
               <option key={l.id} value={l.id}>
@@ -284,16 +304,33 @@ export function ObservationForm({ animalId }: { animalId: string }) {
               </option>
             ))}
           </select>
+          {assisted.locationId && <p className="hint text-info">Rempli par l’aide à la saisie{assisted.locationId === 'DEDUCED' ? ' : lieu proposé, à vérifier.' : '.'}</p>}
           {errors.locationId && (
             <p id="err-loc" className="field-error">
               {errors.locationId}
             </p>
           )}
         </div>
-        <TemporalFields id="obs-time" legend="Moment de l’observation" value={temporal} onChange={(v) => update(v)} error={errors.eventTime} />
+        <TemporalFields
+          id="obs-time"
+          legend="Moment de l’observation"
+          value={temporal}
+          onChange={(v) => {
+            update(v);
+            setAssisted((a) => ({ ...a, eventTime: undefined }));
+          }}
+          error={errors.eventTime}
+        />
+        {assisted.eventTime && <p className="hint text-info">Rempli par l’aide à la saisie{assisted.eventTime === 'TO_CONFIRM' ? ' : à confirmer.' : '.'} Aucune heure n’est supposée si vous ne l’avez pas dite.</p>}
         <div className="field">
           <label htmlFor="obs-note">Observation</label>
-          <textarea id="obs-note" className="input" value={draft.note} aria-invalid={!!errors.note} aria-describedby={errors.note ? 'err-note' : 'note-hint'} onChange={(e) => update({ note: e.target.value })} maxLength={1000} />
+          <textarea id="obs-note" className="input" value={draft.note} aria-invalid={!!errors.note} aria-describedby={errors.note ? 'err-note' : 'note-hint'} onChange={(e) => {
+              update({ note: e.target.value });
+              setAssisted((a) => ({ ...a, note: undefined }));
+            }}
+            maxLength={1000}
+          />
+          {assisted.note && <p className="hint text-info">Rempli par l’aide à la saisie. Relisez : c’est votre observation qui sera enregistrée.</p>}
           <p id="note-hint" className="hint">
             Décrivez ce qui est constaté, sans conclusion diagnostique.
           </p>
@@ -493,9 +530,14 @@ export function TaskCorrection({ taskId }: { taskId: string }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [idemKey] = useState(() => crypto.randomUUID());
+  const idemKey = useMemo(() => crypto.randomUUID(), [taskId]);
+  const [savedRev, setSavedRev] = useState<number | null>(null);
 
   useEffect(() => {
+    setResult(null);
+    setSavedRev(null);
+    setReason('');
+    setErrors({});
     api<TaskDto[]>('/api/tasks', { session })
       .then((ts) => {
         const t = ts.find((x) => x.id === taskId) ?? null;
@@ -537,6 +579,7 @@ export function TaskCorrection({ taskId }: { taskId: string }) {
         : { kind: 'movement', idempotencyKey: idemKey, baseRev: rec.rev, departure: a.value, arrival: b.value, reason: reason.trim() };
       const r = await api<{ rev: number }>(`/api/records/${encodeURIComponent(rec.id)}/revisions`, { method: 'POST', session, body });
       setResult({ tone: 'ok', text: `Révision ${r.rev} enregistrée. La révision ${rec.rev} reste consultable. L’enquêteur peut relancer l’analyse.` });
+      setSavedRev(r.rev);
     } catch (err) {
       if (err instanceof ApiFailure && err.status === 400 && err.body.fields) setErrors(err.body.fields as Record<string, string>);
       setResult({ tone: 'error', text: err instanceof NetworkError ? `${err.message}. La correction n’a pas été enregistrée : réessayez une fois connecté.` : errorMessage(err) });
@@ -544,6 +587,24 @@ export function TaskCorrection({ taskId }: { taskId: string }) {
       setBusy(false);
     }
   };
+
+  if (savedRev !== null)
+    return (
+      <div className="mx-auto max-w-2xl space-y-4">
+        <a href="#/taches" className="text-sm">
+          ← Vérifications
+        </a>
+        <div className="card space-y-4 p-4">
+          <h1 className="text-xl font-bold">{task.label}</h1>
+          <Banner tone="ok">
+            Révision {savedRev} enregistrée pour {rec.id}. La révision {rec.rev} reste consultable. L’enquêteur peut relancer l’analyse.
+          </Banner>
+          <a className="btn btn-primary" href="#/taches">
+            Retour aux vérifications
+          </a>
+        </div>
+      </div>
+    );
 
   return (
     <form className="mx-auto max-w-2xl space-y-4" onSubmit={submit} noValidate>
@@ -591,71 +652,141 @@ export function TaskCorrection({ taskId }: { taskId: string }) {
   );
 }
 
-interface AssistResponse {
-  provider: string;
-  sourceText: string;
-  notice: string;
-  proposal: { animalId: string | null; locationId: string | null; eventTime: TemporalValueDto | null; observation: string | null; undetermined: string[] };
-}
+const FIELD_STATUS: Record<DraftField<unknown>['status'], string> = { OK: 'dit dans la phrase', DEDUCED: 'proposé, à vérifier', TO_CONFIRM: 'à confirmer', MISSING: 'à indiquer', AMBIGUOUS: 'à choisir' };
 
-/** Aide facultative : proposition de formulaire à partir d'un texte libre. Rien n'est enregistré sans confirmation. */
-function AssistPanel({ animalId, onApply }: { animalId: string; onApply: (p: AssistResponse['proposal']) => void }) {
+/**
+ * Aide à la saisie : l'utilisateur dit ou écrit son observation, le formulaire se remplit tout seul, et l'assistant répond ici
+ * (ce qu'il a rempli, ce qui reste à indiquer). Avec un assistant IA configuré sur le serveur, c'est lui qui lit la phrase ;
+ * sinon elle est lue par des règles fixes, et le volet le dit. Rien n'est enregistré sans la validation du formulaire.
+ */
+function AssistPanel({ animalId, locations, onApply }: { animalId: string; locations: LocationDto[]; onApply: (d: ObservationDraftData) => void }) {
   const { health, connection, session } = useApp();
   const [text, setText] = useState('');
-  const [res, setRes] = useState<AssistResponse | null>(null);
+  const [res, setRes] = useState<ObservationAssistReply | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const enabled = !!health?.ai.enabled;
-  const ask = async () => {
+  const [speaking, setSpeaking] = useState(false);
+  const assistant = health?.assistant;
+  const online = connection === 'online';
+  const serverVoice = !!assistant?.voice?.speech;
+  useEffect(() => () => stopSpeech(), []);
+
+  const say = (reply: string) => {
+    setSpeaking(true);
+    void playSpeech(reply, { session, server: serverVoice, onState: (st) => st === null && setSpeaking(false) });
+  };
+  /** Lit la phrase, remplit le formulaire, affiche la réponse. Une phrase dictée reçoit aussi une réponse dite. */
+  const fill = async (sentence: string, spoken = false) => {
+    const t = sentence.trim();
+    if (t.length < 3 || busy) return;
     setError(null);
-    setRes(null);
     setBusy(true);
     try {
-      setRes(await api<AssistResponse>('/api/assist/structure', { method: 'POST', session, body: { text }, timeoutMs: 15000 }));
+      const r = await api<ObservationAssistReply>('/api/assistant/observation', { method: 'POST', session, body: { text: t, animalId }, timeoutMs: 30_000 });
+      setRes(r);
+      onApply(r.result.data);
+      if (spoken) say(r.reply);
     } catch (e) {
-      setError(errorMessage(e));
+      setRes(null);
+      setError(e instanceof NetworkError ? 'Serveur injoignable : l’aide à la saisie est indisponible. Remplissez le formulaire à la main.' : e instanceof ApiFailure && e.body.fields ? Object.values(e.body.fields as Record<string, string>).join(' ') : errorMessage(e));
     } finally {
       setBusy(false);
     }
   };
+  const d = res?.result.data;
+  const siteName = d?.site.value ? (locations.find((l) => l.id === d.site.value)?.name ?? d.site.value) : null;
+
   return (
-    <details className="rounded-lg border border-line bg-surface-2 p-3">
-      <summary className="cursor-pointer font-semibold">Aide à la saisie (IA, facultative)</summary>
-      {!enabled ? (
-        <p className="hint mt-2">Aide IA désactivée : aucun fournisseur n’est configuré sur le serveur. La saisie manuelle ci-dessous est complète.</p>
-      ) : connection !== 'online' ? (
-        <p className="hint mt-2">Aide IA indisponible hors connexion. La saisie manuelle reste possible.</p>
+    <details className="rounded-lg border border-line bg-surface-2 p-3" open>
+      <summary className="cursor-pointer font-semibold">Aide à la saisie : dites ou écrivez, le formulaire se remplit</summary>
+      {!online ? (
+        <p className="hint mt-2">Aide à la saisie indisponible hors connexion. La saisie manuelle ci-dessous est complète.</p>
       ) : (
         <div className="mt-2 space-y-2">
+          <p className="hint">
+            {assistant?.configured ? `Assistant IA connecté : ${assistant.provider} (${assistant.model}). ` : 'Sans assistant IA sur ce serveur : la phrase est lue par des règles fixes. '}
+            Les champs ci-dessous sont remplis automatiquement à partir de votre phrase. Vous vérifiez, puis vous enregistrez.
+          </p>
           <label htmlFor="assist-text" className="block text-sm font-semibold">
-            Décrivez l’observation en une phrase
+            Votre observation, en une phrase
           </label>
-          <textarea id="assist-text" className="input w-full" maxLength={1000} value={text} onChange={(e) => setText(e.target.value)} placeholder={`ex. Pour ${animalId}, baisse d’appétit constatée ce matin sur le site A.`} />
-          <p className="hint">Fournisseur : {health?.ai.provider}. Le texte est envoyé au serveur puis au fournisseur ; n’y mettez pas de données personnelles.</p>
-          <button type="button" className="btn btn-sm" onClick={ask} disabled={busy || text.trim().length < 3}>
-            {busy ? 'Analyse…' : 'Proposer une structuration'}
-          </button>
-          {error && <p className="field-error">{error}</p>}
-          {res && (
-            <div className="space-y-2 rounded-lg border border-info/30 bg-surface p-3 text-sm" aria-live="polite">
-              <p className="font-semibold text-info">Proposition générée par {res.provider} — à vérifier</p>
-              <p className="hint">Texte source : « {res.sourceText} »</p>
+          <textarea
+            id="assist-text"
+            className="input w-full"
+            maxLength={1000}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void fill(text);
+              }
+            }}
+            placeholder="ex. Elle mange moins depuis ce matin, à Élevage A."
+          />
+          <div className="flex flex-wrap items-start gap-3">
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => fill(text)} disabled={busy || text.trim().length < 3}>
+              {busy ? 'Lecture de la phrase…' : 'Remplir le formulaire'}
+            </button>
+            {(assistant?.voice?.available || assistant?.configured) && (
+              <Dictation
+                session={session}
+                available={!!assistant?.voice?.available}
+                maxSeconds={assistant?.voice?.maxSeconds ?? 30}
+                offline={!online}
+                unavailableReason="Dictée indisponible sur ce serveur. Écrivez la phrase."
+                quiet
+                onText={(t) => {
+                  setText(t);
+                  void fill(t, true);
+                }}
+              />
+            )}
+          </div>
+          {error && (
+            <p className="field-error" role="alert">
+              {error}
+            </p>
+          )}
+          {res && d && (
+            <div className="space-y-2 rounded-lg border border-info/30 bg-surface p-3 text-sm" role="status" aria-live="polite" aria-label="Réponse de l’aide à la saisie">
+              <p className="text-[15px] font-semibold">{res.reply}</p>
               <dl className="grid grid-cols-[110px_1fr] gap-1">
                 <dt>Animal</dt>
-                <dd className="num">{res.proposal.animalId ?? 'non déterminé'}</dd>
+                <dd>
+                  <span className="num">{animalId}</span> <span className="hint">(celui de ce formulaire)</span>
+                </dd>
                 <dt>Lieu</dt>
-                <dd>{res.proposal.locationId ?? 'non déterminé'}</dd>
+                <dd>
+                  {siteName ?? '—'} <span className="hint">({FIELD_STATUS[d.site.status]})</span>
+                  {d.site.status === 'DEDUCED' && d.site.message && <span className="hint block">{d.site.message}</span>}
+                </dd>
                 <dt>Moment</dt>
-                <dd>{res.proposal.eventTime ? `${formatTemporal(res.proposal.eventTime)} (à confirmer)` : 'non déterminé'}</dd>
+                <dd>
+                  {d.eventTime.value ? formatTemporal(d.eventTime.value) : '—'} <span className="hint">({FIELD_STATUS[d.eventTime.status]})</span>
+                </dd>
                 <dt>Observation</dt>
-                <dd>{res.proposal.observation ?? 'non déterminée'}</dd>
+                <dd>
+                  {d.note.value ?? '—'} <span className="hint">({FIELD_STATUS[d.note.status]})</span>
+                </dd>
               </dl>
-              {res.proposal.undetermined.length > 0 && <p className="text-amber">Champs non déterminés : {res.proposal.undetermined.join(', ')}.</p>}
-              {res.proposal.animalId && res.proposal.animalId !== animalId && <p className="field-error">Attention : l’animal proposé ({res.proposal.animalId}) diffère de la fiche ouverte ({animalId}).</p>}
-              <button type="button" className="btn btn-sm" onClick={() => onApply(res.proposal)}>
-                Reprendre dans le formulaire
-              </button>
+              {res.otherAnimal && <p className="field-error">Votre phrase nomme {res.otherAnimal} : ce formulaire reste celui de {animalId}.</p>}
               <p className="hint">{res.notice}</p>
+              {(serverVoice || canSpeak()) && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  aria-pressed={speaking}
+                  onClick={() => {
+                    if (speaking) {
+                      stopSpeech();
+                      setSpeaking(false);
+                    } else say(res.reply);
+                  }}
+                >
+                  {speaking ? '■ Arrêter la lecture' : '▶ Écouter la réponse'}
+                </button>
+              )}
             </div>
           )}
         </div>
