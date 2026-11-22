@@ -374,14 +374,14 @@ export function FarmHome({ animalId, incidentId = null }: { animalId: string | n
   const situation = useTool<SituationData>('/api/farm/situation', 'farm.situation', version);
   const changes = useTool<ChangesData>('/api/farm/changes', 'farm.changes', version);
   const animal = useTool<AnimalData>(animalId ? `/api/farm/animals/${encodeURIComponent(animalId)}` : null, animalId ? `farm.animal.${animalId}` : null, version);
-  // Balises de démonstration : relues toutes les 4 secondes tant qu'au moins une est suivie (lecture réelle, pas un flux simulé).
+  // Balises de démonstration : relues toutes les 2 secondes tant qu'au moins une est suivie (lecture réelle, pas un flux simulé).
+  // Sans balise, une relecture plus lente suffit à voir arriver un appareil qui vient d'ouvrir le lien (suivi automatique).
   const [beaconTick, setBeaconTick] = useState(0);
   const beacons = useTool<BeaconsData>('/api/farm/devices', null, version + beaconTick);
   const beaconList = beacons.data?.data.beacons ?? [];
   const beaconsActive = beaconList.some((b) => b.status !== 'STOPPED');
   useEffect(() => {
-    if (!beaconsActive) return;
-    const t = setInterval(() => setBeaconTick((n) => n + 1), 4000);
+    const t = setInterval(() => setBeaconTick((n) => n + 1), beaconsActive ? 2000 : 6000);
     return () => clearInterval(t);
   }, [beaconsActive]);
 
