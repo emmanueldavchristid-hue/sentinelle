@@ -52,10 +52,13 @@ export interface AppOptions {
   aiLimits?: { timeoutMs?: number; maxCallsPerDay?: number };
   /** Assistant « Parler à mon élevage » : modèle configuré côté serveur (absent = lecture directe, sans IA). */
   assistant?: AssistantOptions;
+  /** Version servie (commit Git relevé au démarrage) : permet de savoir, depuis le lien public, quelle version répond. */
+  version?: string;
 }
 
 export async function buildApp(opts: AppOptions) {
   const { db } = opts;
+  const startedAt = new Date().toISOString();
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 64 * 1024 });
 
   app.setErrorHandler((err: unknown, _req, reply) => {
@@ -226,6 +229,8 @@ export async function buildApp(opts: AppOptions) {
     db: db.mode,
     demoMode: opts.demoMode,
     engineVersion: ENGINE_VERSION,
+    version: opts.version ?? null,
+    startedAt,
     ai: assist.status(),
     assistant: assistant.status(),
     serverTime: new Date().toISOString(),

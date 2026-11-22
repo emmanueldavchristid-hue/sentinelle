@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { buildApp } from './app.js';
 import { checkAssistantConfig, config, envFile, envFileLoaded } from './config.js';
 import { geminiModel } from './gemini.js';
@@ -13,6 +14,15 @@ if (empty) await resetAndSeed(db, { living: true });
 const llm = llmFromConfig({ provider: config.aiProvider, apiKey: config.aiApiKey, baseUrl: config.aiBaseUrl, model: config.aiModel });
 if (config.aiProvider && !llm) console.warn(`  AI_PROVIDER=${config.aiProvider} incomplet (clé, AI_BASE_URL ou AI_MODEL manquant) : IA désactivée.`);
 const assistantCheck = checkAssistantConfig();
+/** Commit servi, suivi de « +modifs » si le dossier contient des changements non commités. Sans Git : « inconnue ». */
+const version = (() => {
+  try {
+    const run = (cmd: string) => execSync(cmd, { cwd: import.meta.dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    return `${run('git rev-parse --short HEAD')}${run('git status --porcelain --untracked-files=no') ? '+modifs' : ''}`;
+  } catch {
+    return 'inconnue';
+  }
+})();
 const app = await buildApp({
   assistant: {
     model: assistantCheck.ready ? geminiModel({ apiKey: config.geminiApiKey, model: config.geminiModel, fallbackModel: config.geminiFallbackModel || undefined, ttsModel: config.geminiTtsModel || undefined, ttsVoice: config.geminiTtsVoice }) : null,
@@ -27,6 +37,7 @@ const app = await buildApp({
         : null,
   },
   db,
+  version,
   demoMode: config.demoMode,
   webDist: config.webDist,
   logger: false,
@@ -35,7 +46,7 @@ const app = await buildApp({
   aiLimits: { timeoutMs: config.aiTimeoutMs, maxCallsPerDay: config.aiMaxCallsPerDay },
 });
 await app.listen({ port: config.port, host: config.host });
-console.log(`Sentinelle — http://localhost:${config.port}`);
+console.log(`Sentinelle — http://localhost:${config.port} (version ${version})`);
 console.log(`  base : ${db.mode}${db.mode === 'pglite-file' ? ` (${config.dataDir})` : ''}${applied.length ? ` · migrations appliquées : ${applied.join(', ')}` : ''}${empty ? ' · jeu de démonstration chargé' : ''}`);
 console.log(`  IA : ${llm ? `activée — ${llm.name}` : 'désactivée (aucun fournisseur configuré)'}`);
 console.log(`  configuration : ${envFileLoaded ? `fichier ${envFile} chargé` : `aucun fichier .env (${envFile}), valeurs par défaut`}`);
